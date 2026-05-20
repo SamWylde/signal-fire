@@ -37,6 +37,25 @@ export function sanitizeAccountId(id: string): string {
 }
 
 /**
+ * Historical account IDs were sometimes stored as URL-encoded, compact,
+ * underscore, or kebab-case path names. Keep these variants available for
+ * recovery/migration, while using sanitizeAccountId as the canonical target.
+ */
+export function legacyAccountIdVariants(id: string): string[] {
+  const canonical = sanitizeAccountId(id);
+  const variants = new Set<string>();
+
+  variants.add(canonical);
+  variants.add(encodeURIComponent(canonical));
+  variants.add(canonical.replace(/\s+/g, ''));
+  variants.add(canonical.replace(/\s+/g, '_'));
+  variants.add(canonical.replace(/\s+/g, '-'));
+  variants.delete('');
+
+  return [...variants];
+}
+
+/**
  * One-time migration: rename any URL-encoded account-ID paths to their decoded equivalents.
  *
  * Scans fingerprints/, profiles/, sessions/<platform>/, credentials/<platform>/, blocks/<platform>/,

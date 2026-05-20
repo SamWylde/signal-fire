@@ -586,12 +586,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       <div class="sidebar-spacer"></div>
       <button class="nav-button" data-nav="settings"><span class="nav-dot">G</span><span>Settings</span></button>
       <label style="margin-top:8px;color:var(--nav-muted)">Account
-        <input id="account" class="account-input" value="main" autocomplete="off">
+        <input id="account" class="account-input" value="" autocomplete="off" placeholder="Account label">
       </label>
       <div class="account-chip">
         <div class="avatar">M</div>
         <div style="min-width:0">
-          <div id="activeBadge" class="chip-main">main</div>
+          <div id="activeBadge" class="chip-main">No account</div>
           <div id="saveState" class="chip-sub">Saved locally</div>
         </div>
       </div>
@@ -680,7 +680,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div style="display:flex;align-items:center;gap:8px">
                   <div class="avatar">M</div>
                   <div style="min-width:0;flex:1">
-                    <div id="postingAccount" style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">main</div>
+                    <div id="postingAccount" style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No account</div>
                     <div style="color:var(--ink-3);font-size:11px">Workspace account</div>
                   </div>
                 </div>
@@ -908,13 +908,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <select id="accountPicker"></select>
                   </label>
                   <label>Account label
-                    <input id="accountMirror" value="main" autocomplete="off">
+                    <input id="accountMirror" value="" autocomplete="off" placeholder="Account label">
                   </label>
                 </div>
                 <label class="check-row"><input type="checkbox" id="useBrowserProfile" checked disabled> Persistent browser profile</label>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   <button id="startLogin" class="btn dark" type="button">Open browser login</button>
-                  <button id="finishLogin" class="btn primary" type="button" disabled>Verify and save</button>
+                  <button id="verifyLogin" class="btn" type="button" disabled>Verify</button>
+                  <button id="saveLogin" class="btn primary" type="button" disabled>Save session</button>
                   <button id="cancelLogin" class="btn" type="button" disabled>Cancel login</button>
                   <button id="clearSession" class="btn danger" type="button">Clear selected session</button>
                   <button id="deleteAccount" class="btn danger" type="button">Delete account</button>
@@ -934,7 +935,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   </label>
                   <label>Password
                     <div style="display:inline-flex;gap:4px;width:100%">
-                      <input id="loginPassword" type="password" autocomplete="current-password" style="flex:1;min-width:0">
+                      <input id="loginPassword" type="text" autocomplete="current-password" style="flex:1;min-width:0">
                       <button id="copyPassword" class="btn" type="button" style="padding:4px 8px;font-size:0.8em;white-space:nowrap">Copy</button>
                     </div>
                   </label>
@@ -944,7 +945,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <button id="credentialLogin" class="btn primary" type="button">Login with saved credentials</button>
                   <button id="forgetCredentials" class="btn danger" type="button">Forget saved</button>
                   <span class="meta-line" id="credentialState">No saved credentials.</span>
-                  <span class="meta-line">If a checkpoint opens, finish it and use Verify and save.</span>
+                  <span class="meta-line">If a checkpoint opens, finish it and save the session.</span>
                 </div>
               </div>
             </div>
@@ -1044,6 +1045,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <label>Slow motion ms
                   <input name="slowMoMs" data-save="slowMoMs" inputmode="numeric" form="campaignForm">
                 </label>
+                <input type="hidden" name="spoofFingerprint" value="false" form="campaignForm">
+                <label class="check-row"><input type="checkbox" id="spoofFingerprint" name="spoofFingerprint" value="true" data-save="spoofFingerprint" form="campaignForm"> Spoof browser fingerprint (stealth mode)</label>
+                <div class="meta-line">Leave off to use this computer's real browser identity. Toggling may force a one-time re-login for accounts first saved in the other mode.</div>
                 <div class="two">
                   <label class="file-field"><input type="file" name="cover" accept="image/*" form="campaignForm" data-file-label="coverFileName"><span>Cover</span><span id="coverFileName" class="file-name">No file selected</span></label>
                   <label class="file-field"><input type="file" name="thumbnail" accept="image/*" form="campaignForm" data-file-label="thumbnailFileName"><span>Thumbnail</span><span id="thumbnailFileName" class="file-name">No file selected</span></label>
@@ -1081,6 +1085,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var saveTimer = null;
     var selectedDetailPlatform = 'facebook';
     var credentialLoadTimer = null;
+    var activeFlowLookupTimer = null;
     var latestResults = [];
     var latestStatusRows = [];
     var queuedEntries = [];
@@ -1091,8 +1096,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var accountPickerEl = document.getElementById('accountPicker');
     var activePlatformEl = document.getElementById('activePlatform');
     var useProfileEl = document.getElementById('useBrowserProfile');
+    var spoofFingerprintEl = document.getElementById('spoofFingerprint');
     var formEl = document.getElementById('campaignForm');
-    var finishLoginEl = document.getElementById('finishLogin');
+    var verifyLoginEl = document.getElementById('verifyLogin');
+    var saveLoginEl = document.getElementById('saveLogin');
     var cancelLoginEl = document.getElementById('cancelLogin');
     var credentialLoginEl = document.getElementById('credentialLogin');
     var saveCredentialsEl = document.getElementById('saveCredentials');
@@ -1102,20 +1109,26 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var loginPasswordEl = document.getElementById('loginPassword');
     var copyIdentityEl = document.getElementById('copyIdentity');
     var copyPasswordEl = document.getElementById('copyPassword');
-    var knownAccounts = ['main'];
+    var knownAccounts = [];
+
+    function showPasswordField() {
+      if (loginPasswordEl.type !== 'text') loginPasswordEl.type = 'text';
+    }
+    showPasswordField();
 
     function normalizedAccount(value) {
       return (value || '').replace(/\s+/g, ' ').trim();
     }
 
     function currentAccount() {
-      return normalizedAccount(accountEl.value || accountMirrorEl.value) || 'main';
+      return normalizedAccount(accountEl.value || accountMirrorEl.value);
     }
 
     function displayAccount() {
-      return accountEl.value || accountMirrorEl.value || 'main';
+      return currentAccount() || 'No account';
     }
     function currentPlatform() { return activePlatformEl.value; }
+    function currentSpoofFingerprint() { return spoofFingerprintEl.checked; }
     function supportsCredentialLogin(platform) { return Boolean(platformNames[platform]); }
 
     function setAccountInputs(value) {
@@ -1140,12 +1153,19 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     }
 
     function renderAccountPicker(accounts) {
-      knownAccounts = (accounts || []).filter(function(account, index, list) {
+      var savedAccounts = (accounts || []).filter(function(account, index, list) {
         return account && list.indexOf(account) === index;
       });
+      knownAccounts = savedAccounts.slice();
       var account = currentAccount();
       if (account.length > 0 && knownAccounts.indexOf(account) === -1) knownAccounts.push(account);
       accountPickerEl.replaceChildren();
+      if (knownAccounts.length === 0) {
+        var emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = 'No saved accounts';
+        accountPickerEl.appendChild(emptyOption);
+      }
       knownAccounts.forEach(function(accountName) {
         var option = document.createElement('option');
         option.value = accountName;
@@ -1154,9 +1174,16 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       });
       var deleteBtn = document.getElementById('deleteAccount');
       if (deleteBtn) {
-        var isLast = knownAccounts.length <= 1;
-        deleteBtn.disabled = isLast;
-        deleteBtn.title = isLast ? 'Cannot delete the last remaining account' : '';
+        var savedMatch = savedAccounts.indexOf(account) !== -1;
+        var isLast = savedAccounts.length <= 1;
+        deleteBtn.disabled = account.length === 0 || !savedMatch || isLast;
+        deleteBtn.title = account.length === 0
+          ? 'Choose a saved account to delete'
+          : !savedMatch
+            ? 'Save this account before it can be deleted'
+            : isLast
+              ? 'Cannot delete the last remaining account'
+              : '';
       }
       syncAccountPicker();
     }
@@ -1204,7 +1231,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     }
 
     function setCredentialButtonsEnabled(enabled) {
-      var supported = enabled && supportsCredentialLogin(currentPlatform());
+      var supported = enabled && supportsCredentialLogin(currentPlatform()) && currentAccount().length > 0;
       credentialLoginEl.disabled = !supported;
       saveCredentialsEl.disabled = !supported;
       forgetCredentialsEl.disabled = !supported;
@@ -1227,6 +1254,13 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         setCredentialButtonsEnabled(false);
         return null;
       }
+      if (currentAccount().length === 0) {
+        loginIdentityEl.value = '';
+        loginPasswordEl.value = '';
+        setCredentialState('Choose an account to use saved credentials.');
+        setCredentialButtonsEnabled(false);
+        return null;
+      }
 
       setCredentialState('Checking saved credentials...');
       var data = await api(
@@ -1243,6 +1277,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
       loginIdentityEl.value = data.credentials.identity || '';
       loginPasswordEl.value = data.credentials.password || '';
+      showPasswordField();
       setCredentialState('Credentials saved ' + new Date(data.credentials.updatedAt).toLocaleString() + '.');
       setCredentialButtonsEnabled(true);
       return data.credentials;
@@ -1347,9 +1382,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     }
 
     function applyState(state) {
-      if (state.account) {
-        accountEl.value = state.account;
-        accountMirrorEl.value = state.account;
+      if (Object.prototype.hasOwnProperty.call(state, 'account')) {
+        setAccountInputs(state.account || '');
       }
       if (state.activePlatform) activePlatformEl.value = state.activePlatform;
       if (Array.isArray(state.targets)) {
@@ -1403,11 +1437,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     function updateAll() {
       var account = currentAccount();
-      var visibleAccount = displayAccount();
-      if (document.activeElement !== accountMirrorEl) accountMirrorEl.value = visibleAccount;
-      if (document.activeElement !== accountEl) accountEl.value = visibleAccount;
-      document.getElementById('activeBadge').textContent = account;
-      document.getElementById('postingAccount').textContent = account;
+      if (document.activeElement !== accountMirrorEl) accountMirrorEl.value = account;
+      if (document.activeElement !== accountEl) accountEl.value = account;
+      document.getElementById('activeBadge').textContent = displayAccount();
+      document.getElementById('postingAccount').textContent = displayAccount();
       document.getElementById('loginPlatformBadge').textContent = platformNames[currentPlatform()];
       syncAccountPicker();
       setCredentialButtonsEnabled(true);
@@ -1601,33 +1634,29 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function updateLoginSessionStatus() {
       var badge = document.getElementById('loginSessionBadge');
       var detail = document.getElementById('loginSessionDetail');
+      var account = currentAccount();
       var row = latestStatusRows.find(function(item) {
-        return item.platform === currentPlatform();
+        return item.platform === currentPlatform() && item.account === account;
       });
       var session = row ? row.session : 'none';
       badge.className = 'pill ' + session;
 
-      if (session === 'fresh') {
+      if (account.length === 0) {
+        badge.textContent = 'Not verified';
+        detail.textContent = 'Choose an account to check saved verification.';
+      } else if (session === 'fresh') {
         badge.textContent = 'Verified';
-        detail.textContent = 'Verified for ' + platformNames[currentPlatform()] + ' / ' + currentAccount() + (row.lastValidated ? ' at ' + formatDateTime(row.lastValidated) + '.' : '.');
+        detail.textContent = 'Verified for ' + platformNames[currentPlatform()] + ' / ' + account + (row.lastValidated ? ' at ' + formatDateTime(row.lastValidated) + '.' : '.');
       } else if (session === 'stale') {
         badge.textContent = 'Needs recheck';
-        detail.textContent = 'Saved session exists, but it is stale. Open browser login, confirm the account, then verify again.';
+        detail.textContent = 'Saved session exists, but it is stale. If the browser is logged in, click Verify to trust it again.';
       } else {
         badge.textContent = 'Not verified';
-        detail.textContent = 'No saved verification for ' + platformNames[currentPlatform()] + ' / ' + currentAccount() + '.';
+        detail.textContent = 'No saved verification for ' + platformNames[currentPlatform()] + ' / ' + account + '.';
       }
 
-      if (activeFlowId) {
-        finishLoginEl.textContent = 'Verify and save';
-        finishLoginEl.disabled = false;
-      } else if (session === 'fresh') {
-        finishLoginEl.textContent = 'Verified';
-        finishLoginEl.disabled = true;
-      } else {
-        finishLoginEl.textContent = 'Verify and save';
-        finishLoginEl.disabled = true;
-      }
+      verifyLoginEl.disabled = account.length === 0;
+      saveLoginEl.disabled = !activeFlowId;
     }
 
     function resultLabel(result) {
@@ -1802,11 +1831,35 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     function setLoginFlowActive(active) {
       if (active) {
-        finishLoginEl.textContent = 'Verify and save';
-        finishLoginEl.disabled = false;
+        verifyLoginEl.textContent = 'Verify';
+        saveLoginEl.textContent = 'Save session';
+        saveLoginEl.disabled = false;
       }
+      verifyLoginEl.disabled = currentAccount().length === 0;
       cancelLoginEl.disabled = !active;
       if (!active) updateLoginSessionStatus();
+    }
+
+    async function recoverActiveLoginFlow() {
+      if (activeFlowId || currentAccount().length === 0) return false;
+      var data = await api(
+        '/api/login/active?platform=' + encodeURIComponent(currentPlatform()) +
+        '&account=' + encodeURIComponent(currentAccount())
+      );
+      if (!data.flowId) return false;
+      activeFlowId = data.flowId;
+      setLoginFlowActive(true);
+      setBottom('Reconnected to the open login browser.', 'good');
+      return true;
+    }
+
+    function recoverActiveLoginFlowSoon() {
+      clearTimeout(activeFlowLookupTimer);
+      activeFlowLookupTimer = setTimeout(function() {
+        recoverActiveLoginFlow().catch(function(err) {
+          console.warn('Could not recover active login flow:', err);
+        });
+      }, 250);
     }
 
     function appendOverrideFields(form) {
@@ -1928,6 +1981,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
 
     document.getElementById('startLogin').addEventListener('click', async function() {
+      if (currentAccount().length === 0) {
+        setBottom('Choose an account before opening browser login.', 'bad');
+        return;
+      }
       setBottom('Opening login browser...', '');
       try {
         var data = await api('/api/login/start', {
@@ -1936,7 +1993,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           body: JSON.stringify({
             platform: currentPlatform(),
             account: currentAccount(),
-            useBrowserProfile: useProfileEl.checked
+            useBrowserProfile: useProfileEl.checked,
+            spoofFingerprint: currentSpoofFingerprint()
           })
         });
         activeFlowId = data.flowId;
@@ -2024,7 +2082,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
             account: currentAccount(),
             identity: loginIdentityEl.value,
             password: loginPasswordEl.value,
-            useBrowserProfile: useProfileEl.checked
+            useBrowserProfile: useProfileEl.checked,
+            spoofFingerprint: currentSpoofFingerprint()
           })
         });
         if (data.saved) {
@@ -2036,7 +2095,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         } else {
           activeFlowId = data.flowId;
           setLoginFlowActive(true);
-          setBottom('Finish the open browser challenge, then verify and save.', 'good');
+          setBottom('Finish the open browser challenge, then click Save session. Verify can also mark the selected account as trusted.', 'good');
         }
       } catch (err) {
         setBottom(err.message, 'bad');
@@ -2045,14 +2104,38 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       }
     });
 
-    finishLoginEl.addEventListener('click', async function() {
-      if (!activeFlowId) return;
-      var originalText = finishLoginEl.textContent;
-      setBottom('Verifying session...', '');
-      finishLoginEl.textContent = 'Verifying...';
-      finishLoginEl.disabled = true;
+    verifyLoginEl.addEventListener('click', async function() {
+      if (currentAccount().length === 0) {
+        setBottom('Choose an account before verifying.', 'bad');
+        return;
+      }
+      setBottom('Marking selected account as verified...', '');
+      verifyLoginEl.textContent = 'Verifying...';
+      verifyLoginEl.disabled = true;
       try {
-        await api('/api/login/finish', {
+        await api('/api/session/verify', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ platform: currentPlatform(), account: currentAccount() })
+        });
+        setBottom('Session verified for ' + platformNames[currentPlatform()] + ' / ' + currentAccount() + '.', 'good');
+        await refreshAccounts();
+        await refreshStatus();
+      } catch (err) {
+        setBottom(err.message, 'bad');
+      } finally {
+        verifyLoginEl.textContent = 'Verify';
+        verifyLoginEl.disabled = currentAccount().length === 0;
+      }
+    });
+
+    saveLoginEl.addEventListener('click', async function() {
+      if (!activeFlowId) return;
+      setBottom('Saving session...', '');
+      saveLoginEl.textContent = 'Saving...';
+      saveLoginEl.disabled = true;
+      try {
+        await api('/api/login/save', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ flowId: activeFlowId })
@@ -2064,11 +2147,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         await refreshStatus();
       } catch (err) {
         setLoginFlowActive(true);
-        setBottom(err.message + ' Keep the login browser open, finish the login, then click Verify and save again.', 'bad');
+        setBottom(err.message, 'bad');
       } finally {
         if (activeFlowId) {
-          finishLoginEl.textContent = originalText;
-          finishLoginEl.disabled = false;
+          saveLoginEl.textContent = 'Save session';
+          saveLoginEl.disabled = false;
+          verifyLoginEl.disabled = currentAccount().length === 0;
         } else {
           updateLoginSessionStatus();
         }
@@ -2088,6 +2172,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
 
     document.getElementById('clearSession').addEventListener('click', async function() {
+      if (currentAccount().length === 0) {
+        setBottom('Choose an account before clearing a session.', 'bad');
+        return;
+      }
       setBottom('Clearing session...', '');
       try {
         await api('/api/session/clear', {
@@ -2104,8 +2192,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     document.getElementById('deleteAccount').addEventListener('click', async function() {
       var accountLabel = currentAccount();
+      if (accountLabel.length === 0) {
+        setBottom('Choose a saved account to delete.', 'bad');
+        return;
+      }
       var confirmed = window.confirm(
-        'Delete account \'' + accountLabel + '\' and ALL its data (fingerprint, sessions, browser profile, credentials, block records)? This cannot be undone.'
+        'Delete account \'' + accountLabel + '\' and ALL its data (fingerprint, sessions, browser profile, credentials, block records, history, queue)? This cannot be undone.'
       );
       if (!confirmed) return;
       setBottom('Deleting account...', '');
@@ -2116,10 +2208,17 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           body: JSON.stringify({ accountId: accountLabel })
         });
         setBottom('Account \'' + accountLabel + '\' deleted.', 'good');
-        await refreshAccounts();
+        knownAccounts = knownAccounts.filter(function(account) {
+          return normalizedAccount(account) !== accountLabel;
+        });
         setAccountInputs(knownAccounts[0] || '');
+        await refreshAccounts();
+        if (currentAccount().length === 0 && knownAccounts.length > 0) {
+          setAccountInputs(knownAccounts[0]);
+        }
         updateAll();
-        saveStateSoon();
+        await saveStateNow();
+        await refreshAccountData();
       } catch (err) {
         setBottom(err.message, 'bad');
       }

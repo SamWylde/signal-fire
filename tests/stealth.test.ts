@@ -236,7 +236,9 @@ async function runProbe(
   const { context, fingerprint, close } = await launchBrowser({
     accountId,
     platform: 'x',
+    spoofFingerprint: true,
   });
+  if (fingerprint === undefined) throw new Error('Expected spoofed fingerprint for stealth probe');
   try {
     const page = await context.newPage();
     const probePromise = currentProbeServer.nextProbe();

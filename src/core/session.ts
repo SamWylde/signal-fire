@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { getSignalFireHome, sanitizeAccountId } from './account-id.js';
+import { getSignalFireHome, legacyAccountIdVariants, sanitizeAccountId } from './account-id.js';
 import type { BrowserContext } from './browser.js';
 import { uniqueTempPath, withFileLock } from './file-lock.js';
 import type { AccountId, Platform } from './types.js';
@@ -33,6 +33,41 @@ export function getSessionPaths(platform: Platform, accountId: AccountId): Sessi
   };
 }
 
+function sessionPathsForSafe(platform: Platform, safe: string, userDataSafe = safe): SessionPaths {
+  const root = getSignalFireHome();
+  return {
+    storageStatePath: path.join(root, 'sessions', platform, `${safe}.json`),
+    metadataPath: path.join(root, 'sessions', platform, `${safe}.meta.json`),
+    userDataDir: path.join(root, 'profiles', userDataSafe),
+  };
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveSessionPathsForRead(
+  platform: Platform,
+  accountId: AccountId,
+): Promise<SessionPaths> {
+  const canonical = getSessionPaths(platform, accountId);
+  if (await pathExists(canonical.metadataPath)) return canonical;
+
+  const canonicalSafe = sanitizeAccountId(accountId);
+  for (const variant of legacyAccountIdVariants(accountId)) {
+    if (variant === canonicalSafe) continue;
+    const paths = sessionPathsForSafe(platform, variant, canonicalSafe);
+    if (await pathExists(paths.metadataPath)) return paths;
+  }
+
+  return canonical;
+}
+
 const ALL_PLATFORMS: Platform[] = [
   'facebook',
   'instagram',
@@ -58,6 +93,7 @@ export async function migrateProfileDirIfNeeded(
 ): Promise<void> {
   const root = getSignalFireHome();
   const safe = sanitizeAccountId(accountId);
+  const safeVariants = legacyAccountIdVariants(accountId);
   const newPath = path.join(root, 'profiles', safe);
 
   // Idempotent: new shared path already exists — nothing to do.
@@ -70,15 +106,20 @@ export async function migrateProfileDirIfNeeded(
 
   // Collect all old per-platform profile dirs that actually exist.
   const candidates: Array<{ platform: Platform; dirPath: string; mtimeMs: number }> = [];
+  const seenCandidates = new Set<string>();
   for (const p of ALL_PLATFORMS) {
-    const oldPath = path.join(root, 'profiles', p, safe);
-    try {
-      const stat = await fs.stat(oldPath);
-      if (stat.isDirectory()) {
-        candidates.push({ platform: p, dirPath: oldPath, mtimeMs: stat.mtimeMs });
+    for (const variant of safeVariants) {
+      const oldPath = path.join(root, 'profiles', p, variant);
+      if (seenCandidates.has(oldPath)) continue;
+      seenCandidates.add(oldPath);
+      try {
+        const stat = await fs.stat(oldPath);
+        if (stat.isDirectory()) {
+          candidates.push({ platform: p, dirPath: oldPath, mtimeMs: stat.mtimeMs });
+        }
+      } catch {
+        // doesn't exist — skip
       }
-    } catch {
-      // doesn't exist — skip
     }
   }
 
@@ -97,13 +138,33 @@ export async function migrateProfileDirIfNeeded(
 
   // Archive the losers to profiles-legacy/.
   for (const loser of losers) {
-    const legacyPath = path.join(root, 'profiles-legacy', `${loser.platform}-${safe}`);
+    const legacyPath = path.join(
+      root,
+      'profiles-legacy',
+      `${loser.platform}-${path.basename(loser.dirPath)}`,
+    );
     await fs.mkdir(path.dirname(legacyPath), { recursive: true });
     await fs.rename(loser.dirPath, legacyPath);
     process.stderr.write(
       `[signal-fire] archived legacy profile: ${loser.dirPath} → ${legacyPath}\n`,
     );
   }
+}
+
+export async function hasPersistentProfile(
+  platform: Platform,
+  accountId: AccountId,
+): Promise<boolean> {
+  const paths = getSessionPaths(platform, accountId);
+  if (await pathExists(paths.userDataDir)) return true;
+
+  const root = getSignalFireHome();
+  for (const variant of legacyAccountIdVariants(accountId)) {
+    const legacyPath = path.join(root, 'profiles', platform, variant);
+    if (await pathExists(legacyPath)) return true;
+  }
+
+  return false;
 }
 
 export async function ensureSignalFireDir(): Promise<string> {
@@ -116,7 +177,7 @@ export async function readMetadata(
   platform: Platform,
   accountId: AccountId,
 ): Promise<SessionMetadata | null> {
-  const { metadataPath } = getSessionPaths(platform, accountId);
+  const { metadataPath } = await resolveSessionPathsForRead(platform, accountId);
   try {
     const raw = await fs.readFile(metadataPath, 'utf8');
     return JSON.parse(raw) as SessionMetadata;
@@ -168,9 +229,14 @@ export async function isSessionFresh(
   accountId: AccountId,
   maxAgeHours = 24,
 ): Promise<boolean> {
-  const meta = await readMetadata(platform, accountId);
-  if (meta === null) return false;
-  const paths = getSessionPaths(platform, accountId);
+  const paths = await resolveSessionPathsForRead(platform, accountId);
+  let meta: SessionMetadata;
+  try {
+    meta = JSON.parse(await fs.readFile(paths.metadataPath, 'utf8')) as SessionMetadata;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
   if (meta.mode === 'storageState' && !(await isStorageStateTrusted(paths, meta))) return false;
   if (meta.mode === 'userDataDir') {
     try {
@@ -194,17 +260,12 @@ export async function saveStorageState(
     const state = await context.storageState();
     await atomicWriteFile(storageStatePath, JSON.stringify(state, null, 2));
     const now = new Date().toISOString();
-    const existingMeta = await readMetadata(platform, accountId);
     const meta: SessionMetadata = {
       platform,
       accountId,
       mode: 'storageState',
       lastValidated: now,
       storageStateSha256: await storageStateSha256(storageStatePath),
-      ...(existingMeta !== null && {
-        platform: existingMeta.platform,
-        accountId: existingMeta.accountId,
-      }),
     };
     await atomicWriteFile(metadataPath, JSON.stringify(meta, null, 2));
   });
@@ -214,16 +275,11 @@ export async function markUserDataDirValidated(
   platform: Platform,
   accountId: AccountId,
 ): Promise<void> {
-  const existing = await readMetadata(platform, accountId);
   const meta: SessionMetadata = {
     platform,
     accountId,
     mode: 'userDataDir',
     lastValidated: new Date().toISOString(),
-    ...(existing !== null && {
-      platform: existing.platform,
-      accountId: existing.accountId,
-    }),
   };
   await writeMetadata(meta);
 }
@@ -232,9 +288,14 @@ export async function loadSessionOverrides(
   platform: Platform,
   accountId: AccountId,
 ): Promise<{ userDataDir?: string; storageStatePath?: string }> {
-  const meta = await readMetadata(platform, accountId);
-  if (meta === null) return {};
-  const paths = getSessionPaths(platform, accountId);
+  const paths = await resolveSessionPathsForRead(platform, accountId);
+  let meta: SessionMetadata;
+  try {
+    meta = JSON.parse(await fs.readFile(paths.metadataPath, 'utf8')) as SessionMetadata;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return {};
+    throw err;
+  }
   const result: { userDataDir?: string; storageStatePath?: string } = {};
   if (meta.mode === 'userDataDir') {
     try {
@@ -252,9 +313,14 @@ export async function loadSessionOverrides(
 }
 
 export async function clearSession(platform: Platform, accountId: AccountId): Promise<void> {
-  const paths = getSessionPaths(platform, accountId);
-  await Promise.all([
-    fs.rm(paths.storageStatePath, { force: true }),
-    fs.rm(paths.metadataPath, { force: true }),
-  ]);
+  const canonicalSafe = sanitizeAccountId(accountId);
+  await Promise.all(
+    legacyAccountIdVariants(accountId).map(async (safe) => {
+      const paths = sessionPathsForSafe(platform, safe, canonicalSafe);
+      await Promise.all([
+        fs.rm(paths.storageStatePath, { force: true }),
+        fs.rm(paths.metadataPath, { force: true }),
+      ]);
+    }),
+  );
 }

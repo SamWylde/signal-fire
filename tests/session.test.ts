@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearSession,
   getSessionPaths,
+  hasPersistentProfile,
   isSessionFresh,
   loadSessionOverrides,
   markUserDataDirValidated,
@@ -263,6 +264,20 @@ describe('migrateProfileDirIfNeeded', () => {
     const newDir = path.join(tmpDir, 'profiles', 'alice');
     const marker = await fsp.readFile(path.join(newDir, 'marker.txt'), 'utf8');
     expect(marker).toBe('data');
+    await expect(fsp.access(oldDir)).rejects.toThrow();
+  });
+
+  it('recovers legacy underscore account profile dirs for labels with spaces', async () => {
+    const oldDir = path.join(tmpDir, 'profiles', 'facebook', 'Thomas_Darby');
+    await fsp.mkdir(oldDir, { recursive: true });
+    await fsp.writeFile(path.join(oldDir, 'marker.txt'), 'facebook-login', 'utf8');
+
+    await expect(hasPersistentProfile('facebook', 'Thomas Darby')).resolves.toBe(true);
+    await migrateProfileDirIfNeeded('facebook', 'Thomas Darby');
+
+    const newDir = path.join(tmpDir, 'profiles', 'Thomas Darby');
+    const marker = await fsp.readFile(path.join(newDir, 'marker.txt'), 'utf8');
+    expect(marker).toBe('facebook-login');
     await expect(fsp.access(oldDir)).rejects.toThrow();
   });
 
