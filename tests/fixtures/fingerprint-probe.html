@@ -1,0 +1,415 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Fingerprint probe</title>
+  </head>
+  <body>
+    <script>
+      async function sha256(value) {
+        const bytes = new TextEncoder().encode(value);
+        const digest = await crypto.subtle.digest('SHA-256', bytes);
+        return Array.from(new Uint8Array(digest))
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('');
+      }
+
+      async function withTimeout(promise, fallback, timeoutMs = 750) {
+        let timeoutId;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise((resolve) => {
+              timeoutId = setTimeout(() => resolve(fallback), timeoutMs);
+            })
+          ]);
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      }
+
+      async function probe() {
+        function runtimeEnableLeakTriggered() {
+          let triggered = false;
+          const obj = {};
+          Object.defineProperty(obj, 'stack', {
+            get() {
+              triggered = true;
+              return '';
+            },
+            configurable: true
+          });
+          console.debug(obj, obj);
+          return triggered;
+        }
+
+        function sourceUrlLeakTriggered() {
+          try {
+            throw new Error('source-url-probe');
+          } catch (error) {
+            return /playwright|patchright|pptr|__puppeteer/i.test(error && error.stack ? error.stack : '');
+          }
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 64;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#f6f3ee';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#3157a4';
+        ctx.font = '18px Arial';
+        ctx.fillText('Signal Fire', 8, 32);
+        ctx.strokeStyle = '#c33';
+        ctx.beginPath();
+        ctx.moveTo(3, 58);
+        ctx.bezierCurveTo(30, 8, 90, 70, 125, 12);
+        ctx.stroke();
+        const textOne = ctx.measureText('Signal Fire');
+        const textTwo = ctx.measureText('Signal Fire');
+
+        const glCanvas = document.createElement('canvas');
+        const gl = glCanvas.getContext('webgl') || glCanvas.getContext('experimental-webgl');
+        const webglParamIds = [
+          7936, 7937, 7938, 3408, 3410, 3411, 3412, 3413, 3414, 3415, 3379,
+          3386, 33901, 33902, 34045, 34076, 34024, 34921, 34930, 35658, 36347,
+          35659, 36348, 35660, 35661, 35657, 36349, 35724, 34047, 32883, 33000,
+          33001, 35071, 35076, 35077, 35375, 35376, 35380, 35371, 35373, 35374,
+          35377, 35379, 35968, 35978, 35979, 36063, 36183, 34852, 36203, 37447,
+          37154, 37157, 37445, 37446
+        ];
+        function serializeWebglParam(value) {
+          if (value && typeof value !== 'string' && typeof value.length === 'number') {
+            return Array.from(value);
+          }
+          return value;
+        }
+        const webglParamsById = {};
+        if (gl) {
+          for (const id of webglParamIds) {
+            try {
+              webglParamsById[String(id)] = serializeWebglParam(gl.getParameter(id));
+            } catch (error) {
+              webglParamsById[String(id)] = {
+                error: error && error.name ? error.name : String(error)
+              };
+            }
+          }
+        }
+        const uaData = navigator.userAgentData || null;
+        const uaHighEntropy = uaData?.getHighEntropyValues
+          ? await uaData.getHighEntropyValues([
+              'platformVersion',
+              'fullVersionList',
+              'architecture',
+              'bitness',
+              'uaFullVersion'
+            ])
+          : null;
+        const matchMediaResults = {};
+        for (const query of [
+          '(hover: hover)',
+          '(hover: none)',
+          '(pointer: fine)',
+          '(pointer: coarse)',
+          '(any-pointer: fine)',
+          '(any-pointer: coarse)',
+          '(prefers-reduced-motion: reduce)',
+          '(prefers-contrast: more)',
+          '(prefers-color-scheme: dark)',
+          '(prefers-color-scheme: light)',
+          '(prefers-reduced-transparency: reduce)',
+          '(forced-colors: active)',
+          '(prefers-reduced-data: reduce)'
+        ]) {
+          matchMediaResults[query] = window.matchMedia(query).matches;
+        }
+        const devices = navigator.mediaDevices?.enumerateDevices
+          ? await navigator.mediaDevices.enumerateDevices()
+          : [];
+        const battery = navigator.getBattery
+          ? await navigator.getBattery().catch((error) => ({
+              error: error && error.name ? error.name : String(error)
+            }))
+          : null;
+        const storageEstimate = navigator.storage?.estimate
+          ? await navigator.storage.estimate()
+          : null;
+        const webgpuInfo =
+          navigator.gpu?.requestAdapter
+            ? await withTimeout(
+                navigator.gpu
+                  .requestAdapter()
+                  .then((adapter) => adapter?.requestAdapterInfo?.() || null)
+                  .catch((error) => ({ error: error && error.name ? error.name : String(error) })),
+                { error: 'timeout' }
+              )
+            : null;
+        const workerProbe =
+          typeof Worker === 'undefined'
+            ? null
+            : await withTimeout(
+                new Promise((resolve) => {
+                  let worker;
+                  const source = "postMessage({ ua: navigator.userAgent, vendor: navigator.vendor });";
+                  const workerUrl = URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+                  try {
+                    worker = new Worker(workerUrl);
+                    worker.onmessage = (event) => {
+                      worker.terminate();
+                      URL.revokeObjectURL(workerUrl);
+                      resolve(event.data);
+                    };
+                    worker.onerror = (error) => {
+                      worker.terminate();
+                      URL.revokeObjectURL(workerUrl);
+                      resolve({ error: error && error.message ? error.message : String(error) });
+                    };
+                  } catch (error) {
+                    URL.revokeObjectURL(workerUrl);
+                    resolve({ error: error && error.message ? error.message : String(error) });
+                  }
+                }),
+                { error: 'timeout' },
+                1500
+              );
+        const connection =
+          navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+        const notificationPermission =
+          typeof Notification === 'undefined' ? null : Notification.permission;
+        const notificationQuery = navigator.permissions?.query
+          ? await navigator.permissions
+              .query({ name: 'notifications' })
+              .then((status) => status.state)
+              .catch((error) => `error:${error && error.name ? error.name : String(error)}`)
+          : null;
+        const permissionNames = [
+          'camera',
+          'clipboard-read',
+          'clipboard-write',
+          'geolocation',
+          'microphone',
+          'midi',
+          'midi-sysex',
+          'notifications'
+        ];
+        const permissionStates = {};
+        if (navigator.permissions?.query) {
+          for (const name of permissionNames) {
+            permissionStates[name] = await navigator.permissions
+              .query({ name })
+              .then((status) => status.state)
+              .catch((error) => `error:${error && error.name ? error.name : String(error)}`);
+          }
+        }
+        const voices =
+          typeof speechSynthesis === 'undefined'
+            ? []
+            : speechSynthesis.getVoices().map((voice) => ({
+                default: voice.default,
+                lang: voice.lang,
+                localService: voice.localService,
+                name: voice.name,
+                voiceURI: voice.voiceURI
+              }));
+
+        const data = {
+          userAgent: navigator.userAgent,
+          platform: navigator.platform,
+          maxTouchPoints: navigator.maxTouchPoints,
+          webdriverType: typeof navigator.webdriver,
+          runtimeEnableLeak: runtimeEnableLeakTriggered(),
+          sourceUrlLeak: sourceUrlLeakTriggered(),
+          userAgentData: uaData
+            ? {
+                brands: uaData.brands,
+                mobile: uaData.mobile,
+                platform: uaData.platform,
+                highEntropy: uaHighEntropy
+              }
+            : null,
+          pluginsLength: navigator.plugins.length,
+          webglVendor: gl ? gl.getParameter(37445) : null,
+          webglRenderer: gl ? gl.getParameter(37446) : null,
+          webglParamsById,
+          webglParams: gl
+            ? {
+                vendor: gl.getParameter(7936),
+                renderer: gl.getParameter(7937),
+                version: gl.getParameter(7938),
+                shadingLanguageVersion: gl.getParameter(35724),
+                maxTextureSize: gl.getParameter(3379),
+                maxCubeMapTextureSize: gl.getParameter(34076),
+                maxRenderbufferSize: gl.getParameter(34024),
+                maxViewportDims: Array.from(gl.getParameter(3386)),
+                maxTextureImageUnits: gl.getParameter(34930),
+                maxVertexAttribs: gl.getParameter(34921),
+                maxVertexUniformVectors: gl.getParameter(36347),
+                maxFragmentUniformVectors: gl.getParameter(36349),
+                maxVaryingVectors: gl.getParameter(36348),
+                maxVertexTextureImageUnits: gl.getParameter(35660),
+                maxCombinedTextureImageUnits: gl.getParameter(35661),
+                aliasedLineWidthRange: Array.from(gl.getParameter(33902)),
+                aliasedPointSizeRange: Array.from(gl.getParameter(33901))
+              }
+            : null,
+          webglExtensions: gl ? gl.getSupportedExtensions() : [],
+          webglPrecision: gl
+            ? {
+                fragmentHighFloat: gl.getShaderPrecisionFormat(35632, 36338),
+                vertexHighFloat: gl.getShaderPrecisionFormat(35633, 36338)
+              }
+            : null,
+          canvasHash: await sha256(canvas.toDataURL()),
+          textMetrics: {
+            width: textOne.width,
+            repeatedWidth: textTwo.width,
+            actualBoundingBoxAscent: textOne.actualBoundingBoxAscent,
+            actualBoundingBoxDescent: textOne.actualBoundingBoxDescent
+          },
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          matchMedia: matchMediaResults,
+          battery,
+          storageEstimate,
+          webgpuInfo,
+          workerProbe,
+          mediaDevices: devices.map((device) => ({
+            deviceId: device.deviceId,
+            groupId: device.groupId,
+            kind: device.kind,
+            label: device.label
+          })),
+          connection: connection
+            ? {
+                downlink: connection.downlink,
+                effectiveType: connection.effectiveType,
+                rtt: connection.rtt,
+                saveData: connection.saveData,
+                type: connection.type
+              }
+            : null,
+          notificationPermission,
+          notificationQuery,
+          permissionStates,
+          voices,
+          hasChromeRuntime: !!(window.chrome && window.chrome.runtime),
+          languages: navigator.languages,
+          languagesFrozen: Object.isFrozen(navigator.languages),
+          language: navigator.language,
+          nativeToString: {
+            webglGetParameter: gl
+              ? Function.prototype.toString.call(WebGLRenderingContext.prototype.getParameter).includes('[native code]')
+              : true,
+            webglGetSupportedExtensions: gl
+              ? Function.prototype.toString
+                  .call(WebGLRenderingContext.prototype.getSupportedExtensions)
+                  .includes('[native code]')
+              : true,
+            webglGetExtension: gl
+              ? Function.prototype.toString
+                  .call(WebGLRenderingContext.prototype.getExtension)
+                  .includes('[native code]')
+              : true,
+            webglGetShaderPrecisionFormat: gl
+              ? Function.prototype.toString
+                  .call(WebGLRenderingContext.prototype.getShaderPrecisionFormat)
+                  .includes('[native code]')
+              : true,
+            canvasGetImageData: Function.prototype.toString
+              .call(CanvasRenderingContext2D.prototype.getImageData)
+              .includes('[native code]'),
+            canvasToDataURL: Function.prototype.toString
+              .call(HTMLCanvasElement.prototype.toDataURL)
+              .includes('[native code]'),
+            canvasMeasureText: Function.prototype.toString
+              .call(CanvasRenderingContext2D.prototype.measureText)
+              .includes('[native code]'),
+            audioGetChannelData:
+              typeof AudioBuffer === 'undefined'
+                ? true
+                : Function.prototype.toString
+                    .call(AudioBuffer.prototype.getChannelData)
+                    .includes('[native code]'),
+            mediaDevicesEnumerate: navigator.mediaDevices?.enumerateDevices
+              ? Function.prototype.toString
+                  .call(navigator.mediaDevices.enumerateDevices)
+                  .includes('[native code]')
+              : true,
+            permissionsQuery: navigator.permissions?.query
+              ? Function.prototype.toString
+                  .call(navigator.permissions.query)
+                  .includes('[native code]')
+              : true,
+            speechGetVoices:
+              typeof speechSynthesis === 'undefined'
+                ? true
+                : Function.prototype.toString
+                    .call(speechSynthesis.getVoices)
+                    .includes('[native code]'),
+            userAgentDataGetter: Function.prototype.toString
+              .call(Object.getOwnPropertyDescriptor(Navigator.prototype, 'userAgentData').get)
+              .includes('[native code]'),
+            userAgentDataGetHighEntropy: uaData?.getHighEntropyValues
+              ? Function.prototype.toString
+                  .call(uaData.getHighEntropyValues)
+                  .includes('[native code]')
+              : true,
+            matchMedia: Function.prototype.toString
+              .call(window.matchMedia)
+              .includes('[native code]'),
+            getBattery: navigator.getBattery
+              ? Function.prototype.toString.call(navigator.getBattery).includes('[native code]')
+              : true,
+            storageEstimate: navigator.storage?.estimate
+              ? Function.prototype.toString.call(navigator.storage.estimate).includes('[native code]')
+              : true,
+            webgpuRequestAdapter: navigator.gpu?.requestAdapter
+              ? Function.prototype.toString
+                  .call(navigator.gpu.requestAdapter)
+                  .includes('[native code]')
+              : true,
+            workerConstructor:
+              typeof Worker === 'undefined'
+                ? true
+                : Function.prototype.toString.call(Worker).includes('[native code]'),
+            sharedWorkerConstructor:
+              typeof SharedWorker === 'undefined'
+                ? true
+                : Function.prototype.toString.call(SharedWorker).includes('[native code]'),
+            serviceWorkerRegister: navigator.serviceWorker?.register
+              ? Function.prototype.toString
+                  .call(navigator.serviceWorker.register)
+                  .includes('[native code]')
+              : true,
+            navigatorPlatformGetter: Function.prototype.toString
+              .call(Object.getOwnPropertyDescriptor(Navigator.prototype, 'platform').get)
+              .includes('[native code]'),
+            navigatorMaxTouchPointsGetter: Function.prototype.toString
+              .call(Object.getOwnPropertyDescriptor(Navigator.prototype, 'maxTouchPoints').get)
+              .includes('[native code]')
+          },
+          screen: {
+            width: screen.width,
+            height: screen.height,
+            availWidth: screen.availWidth,
+            availHeight: screen.availHeight,
+            colorDepth: screen.colorDepth,
+            pixelDepth: screen.pixelDepth
+          },
+          devicePixelRatio: window.devicePixelRatio
+        };
+
+        await fetch('/probe', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+      }
+
+      probe().catch((error) => {
+        document.body.textContent =
+          error && error.stack ? error.stack : error && error.message ? error.message : String(error);
+      });
+    </script>
+  </body>
+</html>

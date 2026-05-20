@@ -1,0 +1,74 @@
+{
+  "name": "signal-fire",
+  "version": "0.0.1",
+  "type": "module",
+  "private": true,
+  "main": "./dist/desktop/main.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./platforms/facebook": {
+      "types": "./dist/platforms/facebook/index.d.ts",
+      "default": "./dist/platforms/facebook/index.js"
+    },
+    "./platforms/instagram": {
+      "types": "./dist/platforms/instagram/index.d.ts",
+      "default": "./dist/platforms/instagram/index.js"
+    },
+    "./platforms/linkedin": {
+      "types": "./dist/platforms/linkedin/index.d.ts",
+      "default": "./dist/platforms/linkedin/index.js"
+    },
+    "./platforms/tiktok": {
+      "types": "./dist/platforms/tiktok/index.d.ts",
+      "default": "./dist/platforms/tiktok/index.js"
+    },
+    "./platforms/x": {
+      "types": "./dist/platforms/x/index.d.ts",
+      "default": "./dist/platforms/x/index.js"
+    },
+    "./platforms/youtube": {
+      "types": "./dist/platforms/youtube/index.d.ts",
+      "default": "./dist/platforms/youtube/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "bin": {
+    "signal-fire": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "assets:icon": "node scripts/generate-icon.mjs",
+    "build": "tsc -p tsconfig.json",
+    "desktop": "pnpm build && node dist/desktop/launch.js",
+    "dev": "tsx src/cli/index.ts",
+    "ui": "tsx src/cli/index.ts ui",
+    "test": "vitest run",
+    "test:live": "vitest run",
+    "test:smoke": "vitest run tests/browser.smoke.test.ts",
+    "test:watch": "vitest",
+    "verify:patchright": "tsx scripts/verify-patchright.ts",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "audit-selectors": "tsx scripts/audit-selectors.ts",
+    "inspect-dom": "tsx scripts/inspect-dom.ts",
+    "pick-selectors": "tsx scripts/pick-selectors.ts",
+    "discover-selectors": "tsx scripts/discover-selectors.ts"
+  },
+  "dependencies": {
+    "patchright": "^1.59.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.0.0",
+    "electron": "^35.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

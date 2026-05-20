@@ -1,0 +1,17 @@
+node_modules/
+dist/
+artifacts/
+research/
+.env
+.env.local
+sessions/
+*.log
+.DS_Store
+.vscode/
+.idea/
+.vs/
+*.swp
+*.swo
+*.tsbuildinfo
+# Per-platform session/cookie storage at runtime
+.signal-fire/

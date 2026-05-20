@@ -1,0 +1,1935 @@
+import { randomUUID } from 'node:crypto';
+import * as fs from 'node:fs/promises';
+import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { Readable } from 'node:stream';
+
+import { migrateLegacyAccountIds, sanitizeAccountId } from '../core/account-id.js';
+import {
+  type BrowserContext,
+  type LaunchOptions,
+  type Page,
+  launchBrowser,
+} from '../core/browser.js';
+import {
+  clearStoredCredentials,
+  readStoredCredentials,
+  writeStoredCredentials,
+} from '../core/credential-store.js';
+import { countRecent } from '../core/ledger.js';
+import type { ActionLimits } from '../core/rate-limiter.js';
+import {
+  clearSession,
+  ensureSignalFireDir,
+  isSessionFresh,
+  markUserDataDirValidated,
+  readMetadata,
+} from '../core/session.js';
+import type { AccountId, PostResult } from '../core/types.js';
+import { REDESIGNED_APP_HTML } from './app-html.js';
+
+const POSTING_PLATFORMS = ['tiktok', 'x', 'facebook', 'linkedin', 'youtube', 'instagram'] as const;
+type PostingPlatform = (typeof POSTING_PLATFORMS)[number];
+
+const LOGIN_URLS: Record<PostingPlatform, string> = {
+  tiktok: 'https://www.tiktok.com/login',
+  x: 'https://x.com/i/flow/login',
+  facebook: 'https://www.facebook.com/login',
+  linkedin: 'https://www.linkedin.com/login',
+  youtube: 'https://accounts.google.com/signin',
+  instagram: 'https://www.instagram.com/accounts/login',
+};
+
+interface LoginFlow {
+  platform: PostingPlatform;
+  accountId: AccountId;
+  context: BrowserContext;
+  page: Page;
+  close: () => Promise<void>;
+  startedAt: number;
+}
+
+interface StatusRow {
+  platform: PostingPlatform;
+  account: string;
+  session: 'fresh' | 'stale' | 'none';
+  lastValidated: string | null;
+  postsPerHour: number;
+  postsPerDay: number;
+}
+
+interface CampaignResult {
+  platform: PostingPlatform;
+  ok: boolean;
+  status?: 'posted' | 'queued' | 'failed' | 'skipped';
+  url?: string;
+  error?: string;
+  detail?: string;
+}
+
+interface UiState {
+  account?: string;
+  activePlatform?: PostingPlatform;
+  targets?: PostingPlatform[];
+  fields?: Record<string, string | boolean>;
+  overrideText?: Partial<Record<PostingPlatform, string>>;
+  overrideEnabled?: Partial<Record<PostingPlatform, boolean>>;
+  updatedAt?: string;
+}
+
+interface CampaignAssets {
+  imagePath?: string;
+  videoPath?: string;
+  coverPath?: string;
+  thumbnailPath?: string;
+}
+
+interface StoredCampaign {
+  account: string;
+  targets: PostingPlatform[];
+  fields: Record<string, string | boolean>;
+  assets: CampaignAssets;
+  textPreview: string;
+}
+
+type QueueStatus = 'queued' | 'posting' | 'posted' | 'failed' | 'canceled';
+
+interface QueueEntry extends StoredCampaign {
+  id: string;
+  createdAt: string;
+  scheduledAt: string;
+  status: QueueStatus;
+  lastRunAt?: string;
+  completedAt?: string;
+  results?: CampaignResult[];
+  error?: string;
+}
+
+interface QueueEntryForClient {
+  id: string;
+  createdAt: string;
+  scheduledAt: string;
+  account: string;
+  targets: PostingPlatform[];
+  status: QueueStatus;
+  textPreview: string;
+  lastRunAt?: string;
+  completedAt?: string;
+  results?: CampaignResult[];
+  error?: string;
+}
+
+interface HistoryEntry {
+  id: string;
+  createdAt: string;
+  account: string;
+  platform: PostingPlatform;
+  ok: boolean;
+  status: 'posted' | 'queued' | 'failed' | 'skipped';
+  textPreview: string;
+  queueId?: string;
+  scheduledAt?: string;
+  url?: string;
+  error?: string;
+  detail?: string;
+}
+
+export interface UiServerOptions {
+  host?: string;
+  port?: number;
+}
+
+export interface UiServerHandle {
+  server: Server;
+  url: string;
+  close: () => Promise<void>;
+}
+
+const loginFlows = new Map<string, LoginFlow>();
+const activePosting = new Map<string, number>();
+
+function acquirePostingLock(accountId: string): void {
+  activePosting.set(accountId, (activePosting.get(accountId) ?? 0) + 1);
+}
+
+function releasePostingLock(accountId: string): void {
+  const count = activePosting.get(accountId) ?? 0;
+  if (count <= 1) activePosting.delete(accountId);
+  else activePosting.set(accountId, count - 1);
+}
+
+function isPostingActive(accountId: string): boolean {
+  return (activePosting.get(accountId) ?? 0) > 0;
+}
+let processingDueQueue = false;
+const DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS = 120;
+const DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS = 300;
+const MAX_CAMPAIGN_DELAY_SECONDS = 3600;
+const DEFAULT_POST_LIMIT_PER_HOUR = 4;
+const DEFAULT_POST_LIMIT_PER_DAY = 20;
+const MAX_POST_LIMIT = 1000;
+const MAX_SLOW_MO_MS = 5000;
+const HISTORY_LIMIT = 250;
+const QUEUE_POLL_INTERVAL_MS = 30_000;
+const SAFETY_STOP_PATTERNS = [
+  'action blocked',
+  'captcha',
+  'challenge',
+  'checkpoint',
+  'rate limit',
+  'rate-limit',
+  'suspicious',
+  'temporarily blocked',
+  'try again later',
+  'unusual activity',
+  'verify your account',
+  'we limit how often',
+] as const;
+
+function isPostingPlatform(value: unknown): value is PostingPlatform {
+  return typeof value === 'string' && POSTING_PLATFORMS.includes(value as PostingPlatform);
+}
+
+function getRoot(): string {
+  return process.env.SIGNAL_FIRE_HOME ?? path.join(os.homedir(), '.signal-fire');
+}
+
+function getUiStatePath(): string {
+  return path.join(getRoot(), 'ui', 'state.json');
+}
+
+function getHistoryPath(): string {
+  return path.join(getRoot(), 'ui', 'history.json');
+}
+
+function getQueuePath(): string {
+  return path.join(getRoot(), 'ui', 'queue.json');
+}
+
+function sanitizeFileName(name: string): string {
+  const base = path.basename(name || 'upload.bin');
+  return base.replace(/[^A-Za-z0-9_. -]/g, '_');
+}
+
+function sendJson(res: ServerResponse, status: number, data: unknown): void {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function sendHtml(res: ServerResponse, body: string): void {
+  res.writeHead(200, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+async function readBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+async function readJson<T>(req: IncomingMessage): Promise<T> {
+  const raw = await readBody(req);
+  return (raw.length > 0 ? JSON.parse(raw) : {}) as T;
+}
+
+async function readForm(req: IncomingMessage): Promise<FormData> {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    headers.set(key, Array.isArray(value) ? value.join(', ') : value);
+  }
+
+  const request = new Request('http://signal-fire.local/form', {
+    method: 'POST',
+    headers,
+    body: Readable.toWeb(req) as ReadableStream,
+    duplex: 'half',
+  } as RequestInit & { duplex: 'half' });
+
+  return request.formData();
+}
+
+function formString(form: FormData, key: string): string | undefined {
+  const value = form.get(key);
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function formBool(form: FormData, key: string): boolean {
+  const value = form.get(key);
+  return value === 'on' || value === 'true';
+}
+
+function parseSchedule(raw: string | undefined): { at: Date } | undefined {
+  if (raw === undefined) return undefined;
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error('Schedule must be a valid date or timestamp');
+  }
+  return { at: date };
+}
+
+function isUploadedFile(value: FormDataEntryValue): value is File {
+  return typeof value === 'object' && 'arrayBuffer' in value && 'name' in value && 'size' in value;
+}
+
+async function saveUploadedFile(file: File, bucket: string): Promise<string | undefined> {
+  if (file.size === 0 || file.name.length === 0) return undefined;
+  const root = await ensureSignalFireDir();
+  const uploadDir = path.join(root, 'uploads', bucket);
+  await fs.mkdir(uploadDir, { recursive: true });
+
+  const filePath = path.join(
+    uploadDir,
+    `${Date.now()}-${randomUUID().slice(0, 8)}-${sanitizeFileName(file.name)}`,
+  );
+  await fs.writeFile(filePath, Buffer.from(await file.arrayBuffer()));
+  return filePath;
+}
+
+async function requireFile(form: FormData, key: string, bucket: string): Promise<string> {
+  const value = form.get(key);
+  if (value === null || !isUploadedFile(value)) {
+    throw new Error(`${key} file is required`);
+  }
+
+  const saved = await saveUploadedFile(value, bucket);
+  if (saved === undefined) throw new Error(`${key} file is required`);
+  return saved;
+}
+
+async function optionalFile(
+  form: FormData,
+  key: string,
+  bucket: string,
+): Promise<string | undefined> {
+  const value = form.get(key);
+  if (value === null || !isUploadedFile(value)) return undefined;
+  return saveUploadedFile(value, bucket);
+}
+
+async function optionalFiles(form: FormData, key: string, bucket: string): Promise<string[]> {
+  const saved: string[] = [];
+  for (const value of form.getAll(key)) {
+    if (!isUploadedFile(value)) continue;
+    const filePath = await saveUploadedFile(value, bucket);
+    if (filePath !== undefined) saved.push(filePath);
+  }
+  return saved;
+}
+
+function defaultUiState(): UiState {
+  return {
+    account: 'main',
+    activePlatform: 'tiktok',
+    targets: ['x', 'linkedin'],
+    fields: {
+      text: '',
+      title: '',
+      campaignDelayMinSeconds: String(DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS),
+      campaignDelayMaxSeconds: String(DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS),
+      postLimitPerHour: String(DEFAULT_POST_LIMIT_PER_HOUR),
+      postLimitPerDay: String(DEFAULT_POST_LIMIT_PER_DAY),
+      slowMoMs: '50',
+      pageUrl: '',
+      linkedinTarget: 'profile',
+      linkedinPostType: 'post',
+      linkedinCompanyPageUrl: '',
+      linkedinCompanyId: '',
+      linkedinTitle: '',
+      linkedinShareIntro: '',
+      linkedinDryRun: false,
+      instagramDryRun: false,
+      tiktokVisibility: 'everyone',
+      youtubeVisibility: 'private',
+      allowComments: true,
+      allowDuet: true,
+      allowStitch: true,
+      useBrowserProfile: true,
+    },
+    overrideText: {},
+    overrideEnabled: {},
+  };
+}
+
+function mergeUiState(saved: UiState): UiState {
+  const defaults = defaultUiState();
+  return {
+    ...defaults,
+    ...saved,
+    fields: {
+      ...(defaults.fields ?? {}),
+      ...(saved.fields ?? {}),
+    },
+    overrideText: {
+      ...(defaults.overrideText ?? {}),
+      ...(saved.overrideText ?? {}),
+    },
+    overrideEnabled: {
+      ...(defaults.overrideEnabled ?? {}),
+      ...(saved.overrideEnabled ?? {}),
+    },
+  };
+}
+
+async function loadUiState(): Promise<UiState> {
+  try {
+    const raw = await fs.readFile(getUiStatePath(), 'utf8');
+    return mergeUiState(JSON.parse(raw) as UiState);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      return defaultUiState();
+    }
+    throw err;
+  }
+}
+
+async function saveUiState(state: UiState): Promise<void> {
+  const filePath = getUiStatePath();
+  const tmpPath = `${filePath}.tmp`;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(
+    tmpPath,
+    JSON.stringify({ ...state, updatedAt: new Date().toISOString() }, null, 2),
+    'utf8',
+  );
+  await fs.rename(tmpPath, filePath);
+}
+
+async function readJsonFile<T>(filePath: string, fallback: T): Promise<T> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, 'utf8')) as T;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return fallback;
+    throw err;
+  }
+}
+
+async function writeJsonFile(filePath: string, data: unknown): Promise<void> {
+  const tmpPath = `${filePath}.tmp`;
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+  await fs.rename(tmpPath, filePath);
+}
+
+async function loadHistory(): Promise<HistoryEntry[]> {
+  return readJsonFile<HistoryEntry[]>(getHistoryPath(), []);
+}
+
+async function saveHistory(entries: HistoryEntry[]): Promise<void> {
+  await writeJsonFile(getHistoryPath(), entries.slice(0, HISTORY_LIMIT));
+}
+
+async function appendHistory(entries: HistoryEntry[]): Promise<void> {
+  if (entries.length === 0) return;
+  await saveHistory([...entries, ...(await loadHistory())]);
+}
+
+async function loadQueue(): Promise<QueueEntry[]> {
+  return readJsonFile<QueueEntry[]>(getQueuePath(), []);
+}
+
+async function saveQueue(entries: QueueEntry[]): Promise<void> {
+  await writeJsonFile(getQueuePath(), entries);
+}
+
+function queueEntryForClient(entry: QueueEntry): QueueEntryForClient {
+  return {
+    id: entry.id,
+    createdAt: entry.createdAt,
+    scheduledAt: entry.scheduledAt,
+    account: entry.account,
+    targets: entry.targets,
+    status: entry.status,
+    textPreview: entry.textPreview,
+    ...(entry.lastRunAt !== undefined && { lastRunAt: entry.lastRunAt }),
+    ...(entry.completedAt !== undefined && { completedAt: entry.completedAt }),
+    ...(entry.results !== undefined && { results: entry.results }),
+    ...(entry.error !== undefined && { error: entry.error }),
+  };
+}
+
+function textPreview(value: string | undefined): string {
+  const normalized = (value ?? '').replace(/\s+/g, ' ').trim();
+  if (normalized.length === 0) return 'No post text yet';
+  return normalized.length > 140 ? `${normalized.slice(0, 137)}...` : normalized;
+}
+
+function campaignAccount(form: FormData): string {
+  const accountId = formString(form, 'account');
+  if (accountId === undefined) throw new Error('Account is required');
+  return accountId;
+}
+
+function campaignTargets(form: FormData): PostingPlatform[] {
+  const targets = form.getAll('targets').filter(isPostingPlatform);
+  if (targets.length === 0) throw new Error('Choose at least one platform');
+  return targets;
+}
+
+function persistableFormFields(form: FormData): Record<string, string | boolean> {
+  const fields: Record<string, string | boolean> = {};
+  for (const [key, value] of form.entries()) {
+    if (key === 'targets' || isUploadedFile(value)) continue;
+    fields[key] = value;
+  }
+  return fields;
+}
+
+function buildStoredCampaignForm(campaign: StoredCampaign): FormData {
+  const form = new FormData();
+  form.set('account', campaign.account);
+  for (const target of campaign.targets) form.append('targets', target);
+  for (const [key, value] of Object.entries(campaign.fields)) {
+    if (key === 'account' || key === 'targets' || key === 'schedule') continue;
+    if (typeof value === 'boolean') {
+      if (value) form.set(key, 'on');
+    } else {
+      form.set(key, value);
+    }
+  }
+  return form;
+}
+
+async function enqueueCampaign(
+  form: FormData,
+  assets: CampaignAssets,
+  schedule: { at: Date },
+): Promise<QueueEntry> {
+  const scheduledAtMs = schedule.at.getTime();
+  if (scheduledAtMs <= Date.now()) {
+    throw new Error('Schedule time must be in the future');
+  }
+
+  const entry: QueueEntry = {
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    scheduledAt: schedule.at.toISOString(),
+    status: 'queued',
+    account: campaignAccount(form),
+    targets: campaignTargets(form),
+    fields: persistableFormFields(form),
+    assets,
+    textPreview: textPreview(textForCampaign(form)),
+  };
+
+  await saveQueue([entry, ...(await loadQueue())]);
+  return entry;
+}
+
+async function updateQueueEntry(
+  id: string,
+  update: (entry: QueueEntry) => QueueEntry,
+): Promise<QueueEntry> {
+  const queue = await loadQueue();
+  const index = queue.findIndex((entry) => entry.id === id);
+  if (index === -1) throw new Error('Queue item was not found');
+  const existing = queue[index];
+  if (existing === undefined) throw new Error('Queue item was not found');
+  const updated = update(existing);
+  queue[index] = updated;
+  await saveQueue(queue);
+  return updated;
+}
+
+function queueResults(entry: QueueEntry): CampaignResult[] {
+  return entry.targets.map((platform) => ({
+    platform,
+    ok: true,
+    status: 'queued',
+    detail: `Queued for ${new Date(entry.scheduledAt).toLocaleString()}`,
+  }));
+}
+
+function historyFromResults(
+  results: CampaignResult[],
+  account: string,
+  preview: string,
+  meta: { queueId?: string; scheduledAt?: string } = {},
+): HistoryEntry[] {
+  return results.map((result) => ({
+    id: randomUUID(),
+    createdAt: new Date().toISOString(),
+    account,
+    platform: result.platform,
+    ok: result.ok,
+    status: result.status ?? (result.ok ? 'posted' : 'failed'),
+    textPreview: preview,
+    ...(meta.queueId !== undefined && { queueId: meta.queueId }),
+    ...(meta.scheduledAt !== undefined && { scheduledAt: meta.scheduledAt }),
+    ...(result.url !== undefined && { url: result.url }),
+    ...(result.error !== undefined && { error: result.error }),
+    ...(result.detail !== undefined && { detail: result.detail }),
+  }));
+}
+
+async function getAccountsForPlatform(platform: PostingPlatform): Promise<string[]> {
+  const accounts = new Set<string>();
+  const sessionsDir = path.join(getRoot(), 'sessions', platform);
+  const credentialsDir = path.join(getRoot(), 'credentials', platform);
+
+  try {
+    const entries = await fs.readdir(sessionsDir);
+    for (const entry of entries) {
+      if (entry.endsWith('.meta.json')) {
+        try {
+          const raw = await fs.readFile(path.join(sessionsDir, entry), 'utf8');
+          const meta = JSON.parse(raw) as { accountId?: unknown };
+          if (typeof meta.accountId === 'string' && meta.accountId.trim().length > 0) {
+            accounts.add(meta.accountId.trim());
+          }
+        } catch {
+          const stem = entry.slice(0, -'.meta.json'.length);
+          try {
+            accounts.add(decodeURIComponent(stem));
+          } catch {
+            accounts.add(stem);
+          }
+        }
+      } else if (entry.endsWith('.json')) {
+        const stem = entry.slice(0, -'.json'.length);
+        try {
+          accounts.add(decodeURIComponent(stem));
+        } catch {
+          accounts.add(stem);
+        }
+      }
+    }
+  } catch {}
+
+  try {
+    const entries = await fs.readdir(credentialsDir);
+    for (const entry of entries) {
+      if (!entry.endsWith('.json')) continue;
+      try {
+        const raw = await fs.readFile(path.join(credentialsDir, entry), 'utf8');
+        const record = JSON.parse(raw) as { accountId?: unknown };
+        if (typeof record.accountId === 'string' && record.accountId.trim().length > 0) {
+          accounts.add(record.accountId.trim());
+          continue;
+        }
+      } catch {}
+      const stem = entry.slice(0, -'.json'.length);
+      try {
+        accounts.add(decodeURIComponent(stem));
+      } catch {
+        accounts.add(stem);
+      }
+    }
+  } catch {}
+
+  return [...accounts].sort((left, right) => left.localeCompare(right));
+}
+
+async function listKnownAccounts(): Promise<string[]> {
+  const accounts = new Set<string>();
+
+  for (const platform of POSTING_PLATFORMS) {
+    for (const account of await getAccountsForPlatform(platform)) {
+      if (account.trim().length > 0) accounts.add(account.trim());
+    }
+  }
+
+  for (const entry of await loadHistory()) {
+    if (entry.account.trim().length > 0) accounts.add(entry.account.trim());
+  }
+  for (const entry of await loadQueue()) {
+    if (entry.account.trim().length > 0) accounts.add(entry.account.trim());
+  }
+
+  return [...accounts].sort((left, right) => {
+    if (left === 'main') return -1;
+    if (right === 'main') return 1;
+    return left.localeCompare(right);
+  });
+}
+
+async function buildStatusRow(platform: PostingPlatform, accountId: string): Promise<StatusRow> {
+  const meta = await readMetadata(platform, accountId);
+  if (meta === null) {
+    return {
+      platform,
+      account: accountId,
+      session: 'none',
+      lastValidated: null,
+      postsPerHour: 0,
+      postsPerDay: 0,
+    };
+  }
+
+  return {
+    platform,
+    account: accountId,
+    session: (await isSessionFresh(platform, accountId)) ? 'fresh' : 'stale',
+    lastValidated: meta.lastValidated,
+    postsPerHour: await countRecent(platform, accountId, 'post', 60 * 60 * 1000),
+    postsPerDay: await countRecent(platform, accountId, 'post', 24 * 60 * 60 * 1000),
+  };
+}
+
+async function buildStatus(accountId: string | undefined): Promise<StatusRow[]> {
+  const pairs: Array<[PostingPlatform, string]> = [];
+
+  if (accountId !== undefined) {
+    for (const platform of POSTING_PLATFORMS) pairs.push([platform, accountId]);
+  } else {
+    for (const platform of POSTING_PLATFORMS) {
+      const accounts = await getAccountsForPlatform(platform);
+      for (const account of accounts) pairs.push([platform, account]);
+    }
+  }
+
+  return Promise.all(pairs.map(([platform, account]) => buildStatusRow(platform, account)));
+}
+
+async function invokePost(
+  platform: PostingPlatform,
+  input: unknown,
+  accountId: string,
+  launchOptions: LaunchOptions,
+  rateLimits: ActionLimits | undefined,
+): Promise<PostResult> {
+  const mod = (await import(`../platforms/${platform}/index.js`)) as {
+    post: (
+      input: unknown,
+      options: { accountId: string; launchOptions: LaunchOptions; rateLimits?: ActionLimits },
+    ) => Promise<PostResult>;
+  };
+
+  const options: { accountId: string; launchOptions: LaunchOptions; rateLimits?: ActionLimits } = {
+    accountId,
+    launchOptions,
+  };
+  if (rateLimits !== undefined) options.rateLimits = rateLimits;
+
+  return mod.post(input, options);
+}
+
+async function buildPostInput(
+  platform: PostingPlatform,
+  form: FormData,
+  runImmediate?: boolean,
+): Promise<unknown> {
+  switch (platform) {
+    case 'tiktok': {
+      const videoPath = await requireFile(form, 'video', platform);
+      const description = formString(form, 'description');
+      if (description === undefined) throw new Error('Description is required');
+      const coverPath = await optionalFile(form, 'cover', platform);
+      const productId = formString(form, 'productId');
+      const visibility = formString(form, 'visibility');
+      const schedule =
+        runImmediate === true ? undefined : parseSchedule(formString(form, 'schedule'));
+      return {
+        videoPath,
+        description,
+        ...(coverPath !== undefined && { coverPath }),
+        ...(productId !== undefined && { productId }),
+        ...(visibility !== undefined && { visibility }),
+        ...(schedule !== undefined && { schedule }),
+        allowComments: formBool(form, 'allowComments'),
+        allowDuet: formBool(form, 'allowDuet'),
+        allowStitch: formBool(form, 'allowStitch'),
+      };
+    }
+    case 'x': {
+      const text = formString(form, 'text');
+      if (text === undefined) throw new Error('Text is required');
+      const mediaPaths = await optionalFiles(form, 'media', platform);
+      const communityName = formString(form, 'communityName');
+      const communityId = formString(form, 'communityId');
+      const xDryRun = formBool(form, 'xDryRun');
+      return {
+        text,
+        ...(mediaPaths.length > 0 && { mediaPaths }),
+        ...(communityName !== undefined && { communityName }),
+        ...(communityId !== undefined && { communityId }),
+        ...(xDryRun && { dryRun: true }),
+      };
+    }
+    case 'facebook': {
+      const pageUrl = formString(form, 'pageUrl');
+      const text = formString(form, 'text');
+      if (pageUrl === undefined) throw new Error('Facebook page URL is required');
+      if (text === undefined) throw new Error('Text is required');
+      const imagePath = await optionalFile(form, 'image', platform);
+      const facebookPostAsRaw = formString(form, 'facebookPostAs');
+      let postAs: 'personal' | 'page' = facebookPostAsRaw === 'page' ? 'page' : 'personal';
+      const facebookPageName = formString(form, 'facebookPageName');
+      if (
+        postAs === 'page' &&
+        (facebookPageName === undefined || facebookPageName.trim().length === 0)
+      ) {
+        process.stderr.write(
+          '[facebook] postAs=page but no page name provided; will default to personal\n',
+        );
+        postAs = 'personal';
+      }
+      const facebookDryRun = formBool(form, 'facebookDryRun');
+      return {
+        pageUrl,
+        text,
+        ...(imagePath !== undefined && { imagePath }),
+        postAs,
+        ...(facebookPageName !== undefined &&
+          facebookPageName.trim().length > 0 && { facebookPageName: facebookPageName.trim() }),
+        ...(facebookDryRun && { dryRun: true }),
+      };
+    }
+    case 'linkedin': {
+      const text = formString(form, 'text');
+      if (text === undefined) throw new Error('Text is required');
+      const imagePath = await optionalFile(form, 'image', platform);
+      const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
+      const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
+      const linkedinCompanyId = formString(form, 'linkedinCompanyId') || undefined;
+      if (target === 'company' && companyPageUrl === undefined && linkedinCompanyId === undefined) {
+        throw new Error('LinkedIn company page URL is required');
+      }
+      const linkedinTitle = formString(form, 'linkedinTitle');
+      const linkedinShareIntro = formString(form, 'linkedinShareIntro');
+      const linkedinDryRun = formBool(form, 'linkedinDryRun');
+      return {
+        text,
+        ...(imagePath !== undefined && { imagePath }),
+        target,
+        ...(companyPageUrl !== undefined && { companyPageUrl }),
+        ...(linkedinCompanyId !== undefined && { linkedinCompanyId }),
+        ...(linkedinTitle !== undefined && { title: linkedinTitle }),
+        ...(linkedinShareIntro !== undefined && { shareIntro: linkedinShareIntro }),
+        ...(linkedinDryRun && { dryRun: true }),
+      };
+    }
+    case 'youtube': {
+      const videoPath = await requireFile(form, 'video', platform);
+      const title = formString(form, 'title');
+      if (title === undefined) throw new Error('Title is required');
+      const thumbnailPath = await optionalFile(form, 'thumbnail', platform);
+      const description = formString(form, 'description');
+      const tagsRaw = formString(form, 'tags');
+      const playlist = formString(form, 'playlist');
+      const visibility = formString(form, 'visibility');
+      const schedule =
+        runImmediate === true ? undefined : parseSchedule(formString(form, 'schedule'));
+      const tags =
+        tagsRaw !== undefined
+          ? tagsRaw
+              .split(',')
+              .map((tag) => tag.trim())
+              .filter((tag) => tag.length > 0)
+          : [];
+      return {
+        videoPath,
+        title,
+        ...(thumbnailPath !== undefined && { thumbnailPath }),
+        ...(description !== undefined && { description }),
+        ...(tags.length > 0 && { tags }),
+        ...(playlist !== undefined && { playlist }),
+        ...(visibility !== undefined && { visibility }),
+        ...(schedule !== undefined && { schedule }),
+        ...(formBool(form, 'madeForKids') && { madeForKids: true }),
+      };
+    }
+    case 'instagram': {
+      const imagePath = await requireFile(form, 'image', platform);
+      const caption = formString(form, 'caption');
+      const instagramDryRun = formBool(form, 'instagramDryRun');
+      return {
+        imagePath,
+        ...(caption !== undefined && { caption }),
+        ...(instagramDryRun && { dryRun: true }),
+      };
+    }
+  }
+}
+
+async function runPost(form: FormData): Promise<PostResult> {
+  const platformRaw = formString(form, 'platform');
+  const accountId = formString(form, 'account');
+  if (!isPostingPlatform(platformRaw)) throw new Error('Choose a supported platform');
+  if (accountId === undefined) throw new Error('Account is required');
+
+  acquirePostingLock(accountId);
+  try {
+    return await invokePost(
+      platformRaw,
+      await buildPostInput(platformRaw, form, true),
+      accountId,
+      await buildLaunchOptions(platformRaw, accountId, form),
+      buildRateLimits(form),
+    );
+  } finally {
+    releasePostingLock(accountId);
+  }
+}
+
+function textForCampaign(form: FormData): string | undefined {
+  return formString(form, 'text') ?? formString(form, 'description') ?? formString(form, 'title');
+}
+
+function parseSeconds(value: string | undefined, label: string, defaultSeconds: number): number {
+  const raw = value?.trim();
+  if (raw === undefined || raw.length === 0) return defaultSeconds;
+
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > MAX_CAMPAIGN_DELAY_SECONDS) {
+    throw new Error(`${label} must be between 0 and ${MAX_CAMPAIGN_DELAY_SECONDS} seconds`);
+  }
+
+  return seconds;
+}
+
+export function parseCampaignDelayMs(value: string | undefined): number {
+  return Math.round(
+    parseSeconds(value, 'Delay between platforms', DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS) * 1000,
+  );
+}
+
+export function parseCampaignDelayRangeMs(
+  minValue: string | undefined,
+  maxValue: string | undefined,
+  legacyValue?: string | undefined,
+): { minMs: number; maxMs: number } {
+  if (
+    (minValue === undefined || minValue.trim().length === 0) &&
+    (maxValue === undefined || maxValue.trim().length === 0) &&
+    legacyValue !== undefined
+  ) {
+    const ms = parseCampaignDelayMs(legacyValue);
+    return { minMs: ms, maxMs: ms };
+  }
+
+  const minSeconds = parseSeconds(
+    minValue,
+    'Minimum delay between platforms',
+    DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS,
+  );
+  const maxSeconds = parseSeconds(
+    maxValue,
+    'Maximum delay between platforms',
+    DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS,
+  );
+  if (maxSeconds < minSeconds) {
+    throw new Error(
+      'Maximum delay between platforms must be greater than or equal to minimum delay',
+    );
+  }
+
+  return { minMs: Math.round(minSeconds * 1000), maxMs: Math.round(maxSeconds * 1000) };
+}
+
+export function shouldStopCampaignAfterError(error: string): boolean {
+  const normalized = error.toLowerCase();
+  return SAFETY_STOP_PATTERNS.some((pattern) => normalized.includes(pattern));
+}
+
+function randomDelayMs(range: { minMs: number; maxMs: number }): number {
+  if (range.maxMs <= range.minMs) return range.minMs;
+  return range.minMs + Math.floor(Math.random() * (range.maxMs - range.minMs + 1));
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function appendSafetySkippedResults(
+  results: CampaignResult[],
+  targets: PostingPlatform[],
+  currentIndex: number,
+): void {
+  for (const skipped of targets.slice(currentIndex + 1)) {
+    results.push({
+      platform: skipped,
+      ok: false,
+      status: 'skipped',
+      error:
+        'Skipped after a platform checkpoint or safety warning. Review the account manually before continuing.',
+    });
+  }
+}
+
+function parseOptionalInt(
+  value: string | undefined,
+  label: string,
+  min: number,
+  max: number,
+): number | undefined {
+  const raw = value?.trim();
+  if (raw === undefined || raw.length === 0) return undefined;
+
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < min || parsed > max) {
+    throw new Error(`${label} must be an integer between ${min} and ${max}`);
+  }
+  return parsed;
+}
+
+function buildRateLimits(form: FormData): ActionLimits | undefined {
+  const perHour = parseOptionalInt(
+    formString(form, 'postLimitPerHour'),
+    'Post cap per hour',
+    0,
+    MAX_POST_LIMIT,
+  );
+  const perDay = parseOptionalInt(
+    formString(form, 'postLimitPerDay'),
+    'Post cap per day',
+    0,
+    MAX_POST_LIMIT,
+  );
+  if ((perHour === undefined || perHour === 0) && (perDay === undefined || perDay === 0)) {
+    return undefined;
+  }
+
+  return {
+    post: {
+      ...(perHour !== undefined && perHour > 0 && { perHour }),
+      ...(perDay !== undefined && perDay > 0 && { perDay }),
+    },
+  };
+}
+
+async function buildLaunchOptions(
+  platform: PostingPlatform,
+  accountId: string,
+  form: FormData,
+): Promise<LaunchOptions> {
+  const launchOptions: LaunchOptions = { platform, accountId };
+
+  const slowMo = parseOptionalInt(
+    formString(form, 'slowMoMs'),
+    'Browser slow motion',
+    0,
+    MAX_SLOW_MO_MS,
+  );
+  if (slowMo !== undefined) launchOptions.slowMo = slowMo;
+
+  return launchOptions;
+}
+
+function campaignTags(form: FormData): string[] {
+  return (formString(form, 'tags') ?? '')
+    .split(',')
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
+}
+
+function resolveCaption(platform: PostingPlatform, form: FormData): string | undefined {
+  const enabled = form.get(`overrideEnabled_${platform}`);
+  if (enabled === 'on' || enabled === 'true') {
+    const override = form.get(`overrideText_${platform}`);
+    if (typeof override === 'string' && override.trim().length > 0) return override.trim();
+  }
+  return textForCampaign(form);
+}
+
+function buildCampaignInput(
+  platform: PostingPlatform,
+  form: FormData,
+  assets: CampaignAssets,
+  runImmediate?: boolean,
+): unknown {
+  const text = resolveCaption(platform, form);
+  const title = formString(form, 'title') ?? text?.slice(0, 100);
+  const description = formString(form, 'description') ?? text;
+  const schedule = runImmediate === true ? undefined : parseSchedule(formString(form, 'schedule'));
+
+  switch (platform) {
+    case 'tiktok': {
+      if (assets.videoPath === undefined) throw new Error('Video is required for TikTok');
+      if (description === undefined) throw new Error('Text or description is required for TikTok');
+      const productId = formString(form, 'productId');
+      return {
+        videoPath: assets.videoPath,
+        description,
+        ...(assets.coverPath !== undefined && { coverPath: assets.coverPath }),
+        visibility: formString(form, 'tiktokVisibility') ?? 'everyone',
+        ...(productId !== undefined && { productId }),
+        ...(schedule !== undefined && { schedule }),
+        allowComments: formBool(form, 'allowComments'),
+        allowDuet: formBool(form, 'allowDuet'),
+        allowStitch: formBool(form, 'allowStitch'),
+      };
+    }
+    case 'x': {
+      if (text === undefined) throw new Error('Text is required for X');
+      const mediaPaths = [assets.videoPath, assets.imagePath].filter(
+        (item): item is string => item !== undefined,
+      );
+      const communityName = formString(form, 'communityName');
+      const communityId = formString(form, 'communityId');
+      const xDryRun = formBool(form, 'xDryRun');
+      return {
+        text,
+        ...(mediaPaths.length > 0 && { mediaPaths }),
+        ...(communityName !== undefined && { communityName }),
+        ...(communityId !== undefined && { communityId }),
+        ...(xDryRun && { dryRun: true }),
+      };
+    }
+    case 'facebook': {
+      const pageUrl = formString(form, 'pageUrl');
+      if (pageUrl === undefined) throw new Error('Facebook page URL is required');
+      if (text === undefined) throw new Error('Text is required for Facebook');
+      const facebookPostAsRaw = formString(form, 'facebookPostAs');
+      let postAs: 'personal' | 'page' = facebookPostAsRaw === 'page' ? 'page' : 'personal';
+      const facebookPageName = formString(form, 'facebookPageName');
+      if (
+        postAs === 'page' &&
+        (facebookPageName === undefined || facebookPageName.trim().length === 0)
+      ) {
+        process.stderr.write(
+          '[facebook] postAs=page but no page name provided; will default to personal\n',
+        );
+        postAs = 'personal';
+      }
+      const facebookDryRun = formBool(form, 'facebookDryRun');
+      return {
+        pageUrl,
+        text,
+        ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
+        postAs,
+        ...(facebookPageName !== undefined &&
+          facebookPageName.trim().length > 0 && { facebookPageName: facebookPageName.trim() }),
+        ...(facebookDryRun && { dryRun: true }),
+      };
+    }
+    case 'linkedin': {
+      if (text === undefined) throw new Error('Text is required for LinkedIn');
+      const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
+      const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
+      const linkedinCompanyId = formString(form, 'linkedinCompanyId') || undefined;
+      if (target === 'company' && companyPageUrl === undefined && linkedinCompanyId === undefined) {
+        throw new Error('LinkedIn company page URL is required');
+      }
+      const linkedinPostType =
+        formString(form, 'linkedinPostType') === 'article' ? 'article' : 'post';
+      const linkedinTitle = formString(form, 'linkedinTitle');
+      const linkedinShareIntro = formString(form, 'linkedinShareIntro');
+      const linkedinDryRun = formBool(form, 'linkedinDryRun');
+      return {
+        text,
+        ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
+        target,
+        ...(companyPageUrl !== undefined && { companyPageUrl }),
+        ...(linkedinCompanyId !== undefined && { linkedinCompanyId }),
+        linkedinPostType,
+        ...(linkedinTitle !== undefined && { title: linkedinTitle }),
+        ...(linkedinShareIntro !== undefined && { shareIntro: linkedinShareIntro }),
+        ...(linkedinDryRun && { dryRun: true }),
+      };
+    }
+    case 'youtube': {
+      if (assets.videoPath === undefined) throw new Error('Video is required for YouTube');
+      if (title === undefined) throw new Error('Title is required for YouTube');
+      const tags = campaignTags(form);
+      const playlist = formString(form, 'playlist');
+      return {
+        videoPath: assets.videoPath,
+        title,
+        ...(description !== undefined && { description }),
+        ...(assets.thumbnailPath !== undefined && { thumbnailPath: assets.thumbnailPath }),
+        ...(tags.length > 0 && { tags }),
+        ...(playlist !== undefined && { playlist }),
+        visibility: formString(form, 'youtubeVisibility') ?? 'private',
+        ...(schedule !== undefined && { schedule }),
+        ...(formBool(form, 'madeForKids') && { madeForKids: true }),
+      };
+    }
+    case 'instagram': {
+      if (assets.imagePath === undefined) throw new Error('Image is required for Instagram');
+      const instagramDryRun = formBool(form, 'instagramDryRun');
+      return {
+        imagePath: assets.imagePath,
+        ...(text !== undefined && { caption: text }),
+        ...(instagramDryRun && { dryRun: true }),
+      };
+    }
+  }
+}
+
+async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
+  const bucket = `campaign-${Date.now()}-${randomUUID().slice(0, 8)}`;
+  const imagePath = await optionalFile(form, 'image', bucket);
+  const videoPath = await optionalFile(form, 'video', bucket);
+  const coverPath = await optionalFile(form, 'cover', bucket);
+  const thumbnailPath = await optionalFile(form, 'thumbnail', bucket);
+  return {
+    ...(imagePath !== undefined && { imagePath }),
+    ...(videoPath !== undefined && { videoPath }),
+    ...(coverPath !== undefined && { coverPath }),
+    ...(thumbnailPath !== undefined && { thumbnailPath }),
+  };
+}
+
+async function runCampaignNow(
+  form: FormData,
+  assets: CampaignAssets,
+  historyMeta: { queueId?: string; scheduledAt?: string } = {},
+  runImmediate?: boolean,
+): Promise<{ ok: boolean; results: CampaignResult[] }> {
+  const accountId = campaignAccount(form);
+  acquirePostingLock(accountId);
+  try {
+    const targets = campaignTargets(form);
+    const delayRange = parseCampaignDelayRangeMs(
+      formString(form, 'campaignDelayMinSeconds'),
+      formString(form, 'campaignDelayMaxSeconds'),
+      formString(form, 'campaignDelaySeconds'),
+    );
+    const rateLimits = buildRateLimits(form);
+    const results: CampaignResult[] = [];
+    const preview = textPreview(textForCampaign(form));
+
+    for (const [index, platform] of targets.entries()) {
+      let attemptedPost = false;
+      try {
+        const input = buildCampaignInput(platform, form, assets, runImmediate);
+        attemptedPost = true;
+        const launchOptions = await buildLaunchOptions(platform, accountId, form);
+        const result = await invokePost(platform, input, accountId, launchOptions, rateLimits);
+        results.push({
+          platform,
+          ok: result.ok,
+          status: result.ok ? 'posted' : 'failed',
+          ...(result.url !== undefined && { url: result.url }),
+          ...(result.error !== undefined && { error: result.error }),
+        });
+
+        if (
+          !result.ok &&
+          result.error !== undefined &&
+          shouldStopCampaignAfterError(result.error)
+        ) {
+          appendSafetySkippedResults(results, targets, index);
+          break;
+        }
+      } catch (err) {
+        results.push({
+          platform,
+          ok: false,
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+
+        const error = results.at(-1)?.error ?? '';
+        if (shouldStopCampaignAfterError(error)) {
+          appendSafetySkippedResults(results, targets, index);
+          break;
+        }
+      }
+
+      const delayMs = randomDelayMs(delayRange);
+      if (attemptedPost && index < targets.length - 1 && delayMs > 0) {
+        await delay(delayMs);
+      }
+    }
+
+    await appendHistory(historyFromResults(results, accountId, preview, historyMeta));
+    return { ok: results.every((result) => result.ok), results };
+  } finally {
+    releasePostingLock(accountId);
+  }
+}
+
+async function runCampaign(
+  form: FormData,
+): Promise<{ ok: boolean; queued?: boolean; queue?: QueueEntry[]; results: CampaignResult[] }> {
+  const assets = await collectCampaignAssets(form);
+  const schedule = parseSchedule(formString(form, 'schedule'));
+  if (schedule !== undefined && schedule.at.getTime() > Date.now()) {
+    const entry = await enqueueCampaign(form, assets, schedule);
+    return { ok: true, queued: true, queue: [entry], results: queueResults(entry) };
+  }
+
+  // Schedule is absent or stale (past) — run immediately without forwarding the schedule field
+  const runImmediate = schedule !== undefined;
+  return runCampaignNow(form, assets, {}, runImmediate);
+}
+
+async function runQueuedCampaign(
+  entry: QueueEntry,
+): Promise<{ ok: boolean; results: CampaignResult[] }> {
+  return runCampaignNow(buildStoredCampaignForm(entry), entry.assets, {
+    queueId: entry.id,
+    scheduledAt: entry.scheduledAt,
+  });
+}
+
+async function processDueQueue(): Promise<void> {
+  if (processingDueQueue) return;
+  processingDueQueue = true;
+
+  try {
+    const now = Date.now();
+    const due = (await loadQueue())
+      .filter((entry) => entry.status === 'queued' && Date.parse(entry.scheduledAt) <= now)
+      .sort((left, right) => Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt));
+
+    for (const queuedEntry of due) {
+      const startedAt = new Date().toISOString();
+      const postingEntry = await updateQueueEntry(queuedEntry.id, (entry) => ({
+        ...entry,
+        status: 'posting',
+        lastRunAt: startedAt,
+      }));
+
+      try {
+        const result = await runQueuedCampaign(postingEntry);
+        await updateQueueEntry(postingEntry.id, (entry) => ({
+          ...entry,
+          status: result.ok ? 'posted' : 'failed',
+          completedAt: new Date().toISOString(),
+          results: result.results,
+        }));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const results = postingEntry.targets.map((platform) => ({
+          platform,
+          ok: false,
+          status: 'failed' as const,
+          error: message,
+        }));
+        await appendHistory(
+          historyFromResults(results, postingEntry.account, postingEntry.textPreview, {
+            queueId: postingEntry.id,
+            scheduledAt: postingEntry.scheduledAt,
+          }),
+        );
+        await updateQueueEntry(postingEntry.id, (entry) => ({
+          ...entry,
+          status: 'failed',
+          completedAt: new Date().toISOString(),
+          results,
+          error: message,
+        }));
+      }
+    }
+  } finally {
+    processingDueQueue = false;
+  }
+}
+
+function startQueueScheduler(): NodeJS.Timeout {
+  const timer = setInterval(() => {
+    processDueQueue().catch((err: unknown) => {
+      const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
+      console.error(message);
+    });
+  }, QUEUE_POLL_INTERVAL_MS);
+  timer.unref();
+  void processDueQueue();
+  return timer;
+}
+
+function legacyVariants(accountId: string): string[] {
+  const variants = new Set<string>();
+  variants.add(accountId); // canonical
+  variants.add(encodeURIComponent(accountId)); // URL-encoded
+  variants.add(accountId.replace(/\s+/g, '')); // space-stripped
+  variants.add(accountId.replace(/\s+/g, '_')); // snake_case
+  variants.add(accountId.replace(/\s+/g, '-')); // kebab-case
+  variants.delete('');
+  return Array.from(variants);
+}
+
+export async function deleteAccount(
+  accountId: string,
+): Promise<{ ok: true; deleted: string[] } | { ok: false; error: string }> {
+  if (accountId.length === 0 || accountId.includes('..') || path.isAbsolute(accountId)) {
+    return { ok: false, error: 'Invalid account ID' };
+  }
+
+  if (legacyVariants(accountId).some(isPostingActive)) {
+    return {
+      ok: false,
+      error: 'A posting flow is active for this account. Wait for it to complete and try again.',
+    };
+  }
+
+  for (const flow of loginFlows.values()) {
+    if (flow.accountId === accountId) {
+      return {
+        ok: false,
+        error: 'Browser is currently open for this account. Close it first.',
+      };
+    }
+  }
+
+  const allAccounts = await listKnownAccounts();
+  const canonicalTarget = sanitizeAccountId(accountId);
+  const wouldRemainAfterDelete = allAccounts.filter(
+    (a) => sanitizeAccountId(a) !== canonicalTarget,
+  );
+  if (wouldRemainAfterDelete.length === 0) {
+    const uiState = await loadUiState();
+    const canonicalActive = sanitizeAccountId(uiState.account ?? '');
+    if (canonicalActive === canonicalTarget) {
+      return {
+        ok: false,
+        error: 'Cannot delete the last remaining account. Create another account first.',
+      };
+    }
+  }
+
+  const root = getRoot();
+  const deleted: string[] = [];
+
+  const safeVariants = legacyVariants(sanitizeAccountId(accountId));
+
+  for (const safe of safeVariants) {
+    const fingerprintPath = path.join(root, 'fingerprints', `${safe}.json`);
+    try {
+      await fs.rm(fingerprintPath, { force: true });
+      process.stderr.write(`deleteAccount: removed ${fingerprintPath}\n`);
+      deleted.push(fingerprintPath);
+    } catch (err) {
+      process.stderr.write(`deleteAccount: skipped ${fingerprintPath}: ${String(err)}\n`);
+    }
+
+    // New shared profile path (profiles/<safe>)
+    const profileDir = path.join(root, 'profiles', safe);
+    try {
+      await fs.rm(profileDir, { recursive: true, force: true });
+      process.stderr.write(`deleteAccount: removed ${profileDir}\n`);
+      deleted.push(profileDir);
+    } catch (err) {
+      process.stderr.write(`deleteAccount: skipped ${profileDir}: ${String(err)}\n`);
+    }
+
+    // Legacy per-platform profile paths (profiles/<platform>/<safe>)
+    for (const platform of POSTING_PLATFORMS) {
+      const legacyProfileDir = path.join(root, 'profiles', platform, safe);
+      try {
+        await fs.rm(legacyProfileDir, { recursive: true, force: true });
+        process.stderr.write(`deleteAccount: removed legacy profile ${legacyProfileDir}\n`);
+        deleted.push(legacyProfileDir);
+      } catch (err) {
+        process.stderr.write(`deleteAccount: skipped ${legacyProfileDir}: ${String(err)}\n`);
+      }
+    }
+
+    for (const platform of POSTING_PLATFORMS) {
+      const sessionFile = path.join(root, 'sessions', platform, `${safe}.json`);
+      const metaFile = path.join(root, 'sessions', platform, `${safe}.meta.json`);
+      for (const p of [sessionFile, metaFile]) {
+        try {
+          await fs.rm(p, { force: true });
+          process.stderr.write(`deleteAccount: removed ${p}\n`);
+          deleted.push(p);
+        } catch (err) {
+          process.stderr.write(`deleteAccount: skipped ${p}: ${String(err)}\n`);
+        }
+      }
+
+      const credFile = path.join(root, 'credentials', platform, `${safe}.json`);
+      try {
+        await fs.rm(credFile, { force: true });
+        process.stderr.write(`deleteAccount: removed ${credFile}\n`);
+        deleted.push(credFile);
+      } catch (err) {
+        process.stderr.write(`deleteAccount: skipped ${credFile}: ${String(err)}\n`);
+      }
+
+      const blockFile = path.join(root, 'blocks', platform, `${safe}.json`);
+      try {
+        await fs.rm(blockFile, { force: true });
+        process.stderr.write(`deleteAccount: removed ${blockFile}\n`);
+        deleted.push(blockFile);
+      } catch (err) {
+        process.stderr.write(`deleteAccount: skipped ${blockFile}: ${String(err)}\n`);
+      }
+
+      const ledgerFile = path.join(root, 'ledger', platform, `${safe}.json`);
+      try {
+        await fs.rm(ledgerFile, { force: true });
+        process.stderr.write(`deleteAccount: removed ${ledgerFile}\n`);
+        deleted.push(ledgerFile);
+      } catch (err) {
+        process.stderr.write(`deleteAccount: skipped ${ledgerFile}: ${String(err)}\n`);
+      }
+
+      // Legacy archived profile dirs written by migrateProfileDirIfNeeded
+      const profilesLegacyDir = path.join(root, 'profiles-legacy', `${platform}-${safe}`);
+      try {
+        await fs.rm(profilesLegacyDir, { recursive: true, force: true });
+        process.stderr.write(`deleteAccount: removed ${profilesLegacyDir}\n`);
+        deleted.push(profilesLegacyDir);
+      } catch (err) {
+        process.stderr.write(`deleteAccount: skipped ${profilesLegacyDir}: ${String(err)}\n`);
+      }
+    }
+  }
+
+  // Clear state.json account field if it matches the deleted account so it does
+  // not re-appear in listKnownAccounts on the next /api/accounts call.
+  try {
+    const uiState = await loadUiState();
+    if (
+      uiState.account !== undefined &&
+      sanitizeAccountId(uiState.account) === sanitizeAccountId(accountId)
+    ) {
+      const { account: _removed, ...rest } = uiState;
+      await saveUiState(rest);
+    }
+  } catch {
+    // Non-fatal: state.json update is best-effort
+  }
+
+  return { ok: true, deleted };
+}
+
+async function startLogin(
+  platform: PostingPlatform,
+  accountId: string,
+  _useBrowserProfile: boolean,
+): Promise<string> {
+  for (const [flowId, flow] of loginFlows) {
+    if (flow.platform === platform && flow.accountId === accountId) {
+      await flow.close().catch(() => undefined);
+      loginFlows.delete(flowId);
+    }
+  }
+
+  const launchOptions: LaunchOptions = { platform, accountId };
+
+  const { context, close } = await launchBrowser(launchOptions);
+  const page = context.pages()[0] ?? (await context.newPage());
+  await page.goto(LOGIN_URLS[platform], { waitUntil: 'domcontentloaded' });
+
+  const flowId = randomUUID();
+  loginFlows.set(flowId, {
+    platform,
+    accountId,
+    context,
+    page,
+    close,
+    startedAt: Date.now(),
+  });
+  return flowId;
+}
+
+async function finishLogin(flowId: string): Promise<void> {
+  const flow = loginFlows.get(flowId);
+  if (flow === undefined) throw new Error('Login flow was not found');
+
+  const authModule = (await import(`../platforms/${flow.platform}/auth.js`)) as {
+    isLoggedIn?: (page: Page) => Promise<boolean>;
+  };
+  const loggedIn = await authModule.isLoggedIn?.(flow.page);
+  if (loggedIn !== true) {
+    throw new Error(
+      `Could not verify the ${flow.platform} session yet. The account still appears logged out.`,
+    );
+  }
+
+  await markUserDataDirValidated(flow.platform, flow.accountId);
+  await flow.close();
+  loginFlows.delete(flowId);
+}
+
+async function cancelLogin(flowId: string): Promise<void> {
+  const flow = loginFlows.get(flowId);
+  if (flow === undefined) return;
+  await flow.close().catch(() => undefined);
+  loginFlows.delete(flowId);
+}
+
+async function submitCredentialLogin(
+  platform: PostingPlatform,
+  page: Page,
+  identity: string,
+  password: string,
+): Promise<boolean> {
+  switch (platform) {
+    case 'facebook': {
+      const authModule = (await import('../platforms/facebook/auth.js')) as {
+        loginWithCredentials: (page: Page, email: string, password: string) => Promise<void>;
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      await authModule.loginWithCredentials(page, identity, password);
+      return authModule.isLoggedIn(page);
+    }
+    case 'instagram': {
+      const authModule = (await import('../platforms/instagram/auth.js')) as {
+        loginWithCredentials: (page: Page, username: string, password: string) => Promise<void>;
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      await authModule.loginWithCredentials(page, identity, password);
+      return authModule.isLoggedIn(page);
+    }
+    case 'linkedin': {
+      const authModule = (await import('../platforms/linkedin/auth.js')) as {
+        loginWithCredentials: (page: Page, username: string, password: string) => Promise<void>;
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      await authModule.loginWithCredentials(page, identity, password);
+      return authModule.isLoggedIn(page);
+    }
+    case 'tiktok': {
+      const authModule = (await import('../platforms/tiktok/auth.js')) as {
+        loginWithCredentials: (page: Page, username: string, password: string) => Promise<void>;
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      await authModule.loginWithCredentials(page, identity, password);
+      return authModule.isLoggedIn(page);
+    }
+    case 'x': {
+      const authModule = (await import('../platforms/x/auth.js')) as {
+        loginWithCredentials: (page: Page, username: string, password: string) => Promise<void>;
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      await authModule.loginWithCredentials(page, identity, password);
+      return authModule.isLoggedIn(page);
+    }
+    case 'youtube': {
+      const authModule = (await import('../platforms/youtube/auth.js')) as {
+        loginWithCredentials: (page: Page, email: string, password: string) => Promise<void>;
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      await authModule.loginWithCredentials(page, identity, password);
+      return authModule.isLoggedIn(page);
+    }
+    default:
+      throw new Error('Choose a supported platform');
+  }
+}
+
+async function startCredentialLogin(
+  platform: PostingPlatform,
+  accountId: string,
+  identity: string,
+  password: string,
+  _useBrowserProfile: boolean,
+): Promise<{ saved: boolean; flowId?: string }> {
+  if (identity.trim().length === 0) throw new Error('Email or username is required');
+  if (password.length === 0) throw new Error('Password is required');
+
+  for (const [flowId, flow] of loginFlows) {
+    if (flow.platform === platform && flow.accountId === accountId) {
+      await flow.close().catch(() => undefined);
+      loginFlows.delete(flowId);
+    }
+  }
+
+  const launchOptions: LaunchOptions = { platform, accountId };
+
+  const { context, close } = await launchBrowser(launchOptions);
+  const page = context.pages()[0] ?? (await context.newPage());
+  try {
+    const loggedIn = await submitCredentialLogin(platform, page, identity.trim(), password);
+    if (loggedIn) {
+      await markUserDataDirValidated(platform, accountId);
+      await close();
+      return { saved: true };
+    }
+
+    const flowId = randomUUID();
+    loginFlows.set(flowId, {
+      platform,
+      accountId,
+      context,
+      page,
+      close,
+      startedAt: Date.now(),
+    });
+    return { saved: false, flowId };
+  } catch (err) {
+    await close().catch(() => undefined);
+    throw err;
+  }
+}
+
+async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? '/', 'http://signal-fire.local');
+
+  if (req.method === 'GET' && url.pathname === '/') {
+    sendHtml(res, REDESIGNED_APP_HTML);
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/state') {
+    sendJson(res, 200, { ok: true, state: await loadUiState() });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/state') {
+    await saveUiState(await readJson<UiState>(req));
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/history') {
+    const account = url.searchParams.get('account')?.trim() || undefined;
+    const history = await loadHistory();
+    sendJson(res, 200, {
+      ok: true,
+      entries:
+        account === undefined ? history : history.filter((entry) => entry.account === account),
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/history/clear') {
+    await saveHistory([]);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/queue') {
+    const account = url.searchParams.get('account')?.trim() || undefined;
+    const queue = await loadQueue();
+    sendJson(res, 200, {
+      ok: true,
+      entries: (account === undefined
+        ? queue
+        : queue.filter((entry) => entry.account === account)
+      ).map(queueEntryForClient),
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/queue') {
+    const form = await readForm(req);
+    const schedule = parseSchedule(formString(form, 'schedule'));
+    if (schedule === undefined) throw new Error('Choose a schedule time to queue');
+    const entry = await enqueueCampaign(form, await collectCampaignAssets(form), schedule);
+    sendJson(res, 200, { ok: true, entry: queueEntryForClient(entry) });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/queue/cancel') {
+    const body = await readJson<{ id?: unknown }>(req);
+    if (typeof body.id !== 'string' || body.id.trim().length === 0) {
+      throw new Error('Queue item is required');
+    }
+    const entry = await updateQueueEntry(body.id, (existing) => {
+      if (existing.status !== 'queued') {
+        throw new Error('Only queued items can be canceled');
+      }
+      return { ...existing, status: 'canceled', completedAt: new Date().toISOString() };
+    });
+    sendJson(res, 200, { ok: true, entry: queueEntryForClient(entry) });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/status') {
+    const account = url.searchParams.get('account')?.trim() || undefined;
+    sendJson(res, 200, { ok: true, rows: await buildStatus(account) });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/accounts') {
+    sendJson(res, 200, { ok: true, accounts: await listKnownAccounts() });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/login/start') {
+    const body = await readJson<{
+      platform?: unknown;
+      account?: unknown;
+      useBrowserProfile?: unknown;
+    }>(req);
+    if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
+    const accountId = typeof body.account === 'string' ? body.account.trim() : '';
+    if (accountId.length === 0) throw new Error('Account is required');
+    const flowId = await startLogin(body.platform, accountId, body.useBrowserProfile === true);
+    sendJson(res, 200, { ok: true, flowId });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/login/finish') {
+    const body = await readJson<{ flowId?: unknown }>(req);
+    if (typeof body.flowId !== 'string') throw new Error('Login flow is required');
+    await finishLogin(body.flowId);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/login/cancel') {
+    const body = await readJson<{ flowId?: unknown }>(req);
+    if (typeof body.flowId === 'string') await cancelLogin(body.flowId);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/credentials') {
+    const platform = url.searchParams.get('platform');
+    const accountId = url.searchParams.get('account')?.trim() ?? '';
+    if (!isPostingPlatform(platform)) throw new Error('Choose a supported platform');
+    if (accountId.length === 0) throw new Error('Account is required');
+    const credentials = await readStoredCredentials(platform, accountId);
+    sendJson(res, 200, { ok: true, credentials });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/credentials') {
+    const body = await readJson<{
+      platform?: unknown;
+      account?: unknown;
+      identity?: unknown;
+      password?: unknown;
+    }>(req);
+    if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
+    const accountId = typeof body.account === 'string' ? body.account.trim() : '';
+    if (accountId.length === 0) throw new Error('Account is required');
+    if (typeof body.identity !== 'string') throw new Error('Email or username is required');
+    if (typeof body.password !== 'string') throw new Error('Password is required');
+    const credentials = await writeStoredCredentials({
+      platform: body.platform,
+      accountId,
+      identity: body.identity,
+      password: body.password,
+    });
+    sendJson(res, 200, { ok: true, credentials });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/credentials/clear') {
+    const body = await readJson<{ platform?: unknown; account?: unknown }>(req);
+    if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
+    const accountId = typeof body.account === 'string' ? body.account.trim() : '';
+    if (accountId.length === 0) throw new Error('Account is required');
+    await clearStoredCredentials(body.platform, accountId);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/login/credentials') {
+    const body = await readJson<{
+      platform?: unknown;
+      account?: unknown;
+      identity?: unknown;
+      password?: unknown;
+      useBrowserProfile?: unknown;
+    }>(req);
+    if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
+    const accountId = typeof body.account === 'string' ? body.account.trim() : '';
+    if (accountId.length === 0) throw new Error('Account is required');
+    if (typeof body.identity !== 'string') throw new Error('Email or username is required');
+    if (typeof body.password !== 'string') throw new Error('Password is required');
+    await writeStoredCredentials({
+      platform: body.platform,
+      accountId,
+      identity: body.identity,
+      password: body.password,
+    });
+    const result = await startCredentialLogin(
+      body.platform,
+      accountId,
+      body.identity,
+      body.password,
+      body.useBrowserProfile === true,
+    );
+    sendJson(res, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/session/clear') {
+    const body = await readJson<{ platform?: unknown; account?: unknown }>(req);
+    if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
+    const accountId = typeof body.account === 'string' ? body.account.trim() : '';
+    if (accountId.length === 0) throw new Error('Account is required');
+    await clearSession(body.platform, accountId as AccountId);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/account/delete') {
+    const body = await readJson<{ accountId?: unknown }>(req);
+    const accountId = typeof body.accountId === 'string' ? body.accountId.trim() : '';
+    if (accountId.length === 0) throw new Error('Account ID is required');
+    const result = await deleteAccount(accountId);
+    sendJson(res, result.ok ? 200 : 409, result);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/post') {
+    const result = await runPost(await readForm(req));
+    sendJson(res, result.ok ? 200 : 422, result);
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/campaign') {
+    const result = await runCampaign(await readForm(req));
+    sendJson(res, 200, {
+      ok: true,
+      campaignOk: result.ok,
+      results: result.results,
+      ...(result.queued === true && { queued: true }),
+      ...(result.queue !== undefined && { queue: result.queue.map(queueEntryForClient) }),
+    });
+    return;
+  }
+
+  sendJson(res, 404, { ok: false, error: 'Not found' });
+}
+
+async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  try {
+    await route(req, res);
+  } catch (err) {
+    sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+async function listen(server: Server, host: string, port: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const onError = (err: NodeJS.ErrnoException) => {
+      server.off('listening', onListening);
+      reject(err);
+    };
+    const onListening = () => {
+      server.off('error', onError);
+      const address = server.address();
+      resolve(typeof address === 'object' && address !== null ? address.port : port);
+    };
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port, host);
+  });
+}
+
+export async function startUiServer(options: UiServerOptions = {}): Promise<UiServerHandle> {
+  await migrateLegacyAccountIds();
+
+  const host = options.host ?? '127.0.0.1';
+  const preferredPort = options.port ?? 4317;
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const port = preferredPort + attempt;
+    const server = createServer((req, res) => {
+      void handle(req, res);
+    });
+
+    try {
+      const actualPort = await listen(server, host, port);
+      const url = `http://${host}:${actualPort}`;
+      const queueTimer = startQueueScheduler();
+      return {
+        server,
+        url,
+        close: () =>
+          new Promise<void>((resolve, reject) => {
+            clearInterval(queueTimer);
+            server.close((err) => (err !== undefined ? reject(err) : resolve()));
+          }),
+      };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+    }
+  }
+
+  throw new Error(`Could not find an open port starting at ${preferredPort}`);
+}
