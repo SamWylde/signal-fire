@@ -5,7 +5,7 @@
  * current site UIs, using the same persistent browser session the app uses.
  *
  * Usage:
- *   pnpm audit-selectors -- --account <accountId> [--platform <name>] [--no-keep-open]
+ *   pnpm audit-selectors -- --account <accountId> [--platform <name>] [--no-keep-open] [--spoof-fingerprint]
  */
 
 import * as fsSync from 'node:fs';
@@ -233,6 +233,11 @@ function chromeUserAgent(chromeMajor: number): string {
   return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36`;
 }
 
+function cliSpoofFingerprintEnabled(): boolean {
+  const args = process.argv.slice(2);
+  return args.includes('--spoof-fingerprint') || args.includes('--enable-stealth-fingerprint');
+}
+
 // ---------------------------------------------------------------------------
 // Browser launch (minimal duplicate of browser.ts, no quarantine/block checks)
 // ---------------------------------------------------------------------------
@@ -245,17 +250,20 @@ async function launchAuditBrowser(accountId: string): Promise<BrowserContext> {
     );
   }
 
-  registerChromeMajorDetector(async () => chromeMajorFromVersion(getInstalledChromeVersion()));
-
-  const fingerprint = await loadOrCreateFingerprint(accountId);
-
-  // Normalize UA to installed Chrome major
-  const detectedMajor = chromeMajorFromVersion(getInstalledChromeVersion());
-  const persistedMajor = chromeMajorFromUA(fingerprint.userAgent);
-  const normalizedFingerprint =
-    detectedMajor !== null && persistedMajor !== detectedMajor
-      ? { ...fingerprint, userAgent: chromeUserAgent(detectedMajor) }
-      : fingerprint;
+  const spoofFingerprint = cliSpoofFingerprintEnabled();
+  const normalizedFingerprint = spoofFingerprint
+    ? await (async () => {
+        registerChromeMajorDetector(async () =>
+          chromeMajorFromVersion(getInstalledChromeVersion()),
+        );
+        const fingerprint = await loadOrCreateFingerprint(accountId);
+        const detectedMajor = chromeMajorFromVersion(getInstalledChromeVersion());
+        const persistedMajor = chromeMajorFromUA(fingerprint.userAgent);
+        return detectedMajor !== null && persistedMajor !== detectedMajor
+          ? { ...fingerprint, userAgent: chromeUserAgent(detectedMajor) }
+          : fingerprint;
+      })()
+    : undefined;
 
   // Use the account-level (platform-agnostic) userDataDir.
   // getSessionPaths needs a platform; 'linkedin' is used as a representative since
@@ -275,8 +283,10 @@ async function launchAuditBrowser(accountId: string): Promise<BrowserContext> {
       args: [...BASE_LAUNCH_ARGS],
       acceptDownloads: false,
       viewport: null,
-      locale: normalizedFingerprint.locale,
-      timezoneId: normalizedFingerprint.timezoneId,
+      ...(normalizedFingerprint !== undefined && {
+        locale: normalizedFingerprint.locale,
+        timezoneId: normalizedFingerprint.timezoneId,
+      }),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -293,7 +303,7 @@ async function launchAuditBrowser(accountId: string): Promise<BrowserContext> {
     throw err;
   }
 
-  await applyFingerprintEvasions(context, normalizedFingerprint);
+  await applyFingerprintEvasions(context, { fingerprint: normalizedFingerprint, spoofFingerprint });
   return context;
 }
 

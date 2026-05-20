@@ -3,7 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { getSignalFireHome, sanitizeAccountId } from './account-id.js';
+import { getSignalFireHome, legacyAccountIdVariants, sanitizeAccountId } from './account-id.js';
 import { uniqueTempPath, withFileLock } from './file-lock.js';
 import type { AccountId, Platform } from './types.js';
 
@@ -68,6 +68,36 @@ export function credentialsPath(platform: Platform, accountId: AccountId): strin
   );
 }
 
+function credentialsPathForSafe(platform: Platform, safe: string): string {
+  return path.join(getSignalFireHome(), 'credentials', platform, `${safe}.json`);
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveCredentialsPathForRead(
+  platform: Platform,
+  accountId: AccountId,
+): Promise<string> {
+  const canonical = credentialsPath(platform, accountId);
+  if (await pathExists(canonical)) return canonical;
+
+  const canonicalSafe = sanitizeAccountId(accountId);
+  for (const variant of legacyAccountIdVariants(accountId)) {
+    if (variant === canonicalSafe) continue;
+    const candidate = credentialsPathForSafe(platform, variant);
+    if (await pathExists(candidate)) return candidate;
+  }
+
+  return canonical;
+}
+
 async function atomicWriteJson(filePath: string, data: unknown): Promise<void> {
   const tmpPath = uniqueTempPath(filePath);
   let handle: fs.FileHandle | undefined;
@@ -92,7 +122,7 @@ export async function readStoredCredentials(
 ): Promise<StoredCredentials | null> {
   try {
     const record = JSON.parse(
-      await fs.readFile(credentialsPath(platform, accountId), 'utf8'),
+      await fs.readFile(await resolveCredentialsPathForRead(platform, accountId), 'utf8'),
     ) as CredentialRecord;
     return {
       platform: record.platform,
@@ -145,5 +175,9 @@ export async function clearStoredCredentials(
   platform: Platform,
   accountId: AccountId,
 ): Promise<void> {
-  await fs.rm(credentialsPath(platform, accountId), { force: true });
+  await Promise.all(
+    legacyAccountIdVariants(accountId).map((safe) =>
+      fs.rm(credentialsPathForSafe(platform, safe), { force: true }),
+    ),
+  );
 }

@@ -34,6 +34,8 @@ export interface LaunchOptions {
   browserChannel?: BrowserChannel | 'bundled';
   slowMo?: number;
   acceptDownloads?: boolean;
+  /** When true, apply the generated per-account fingerprint. Defaults to real-machine mode. */
+  spoofFingerprint?: boolean;
   extraArgs?: string[];
   /** @deprecated UA overrides break native UA / Client Hints coherence; ignored. */
   debugUserAgent?: string;
@@ -43,7 +45,7 @@ export interface LaunchOptions {
 
 export interface LaunchedBrowser {
   context: BrowserContext;
-  fingerprint: AccountFingerprint;
+  fingerprint?: AccountFingerprint;
   close: () => Promise<void>;
 }
 
@@ -270,15 +272,17 @@ export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowse
 
   warnIgnoredLaunchOptions(opts);
   const browserChannel = resolveBrowserChannel(opts.browserChannel);
+  const spoofFingerprint = opts.spoofFingerprint === true;
 
-  // Register the version detector so fingerprint.ts can use it during loadOrCreateFingerprint
-  registerChromeMajorDetector(async () => {
-    return chromeMajorFromVersion(getInstalledChromeVersion());
-  });
-
-  const fingerprint = await normalizeFingerprintForRuntime(
-    await loadOrCreateFingerprint(opts.accountId),
-  );
+  const fingerprint = spoofFingerprint
+    ? await (async () => {
+        // Register the version detector so fingerprint.ts can use it during loadOrCreateFingerprint.
+        registerChromeMajorDetector(async () => {
+          return chromeMajorFromVersion(getInstalledChromeVersion());
+        });
+        return normalizeFingerprintForRuntime(await loadOrCreateFingerprint(opts.accountId));
+      })()
+    : undefined;
   await migrateProfileDirIfNeeded(opts.platform, opts.accountId);
   const paths = getSessionPaths(opts.platform, opts.accountId);
 
@@ -300,16 +304,18 @@ export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowse
     args: buildLaunchArgs(opts.extraArgs),
     acceptDownloads: opts.acceptDownloads ?? false,
     viewport: null,
-    locale: fingerprint.locale,
-    timezoneId: fingerprint.timezoneId,
+    ...(fingerprint !== undefined && {
+      locale: fingerprint.locale,
+      timezoneId: fingerprint.timezoneId,
+    }),
     ...(opts.slowMo !== undefined && { slowMo: opts.slowMo }),
   });
 
-  await applyFingerprintEvasions(context, fingerprint);
+  await applyFingerprintEvasions(context, { fingerprint, spoofFingerprint });
 
   return {
     context,
-    fingerprint,
+    ...(fingerprint !== undefined && { fingerprint }),
     close: () => context.close(),
   };
 }

@@ -1,6 +1,7 @@
 import type { AccountFingerprint } from '../fingerprint.js';
 
 export type EvasionBuilder = (fp: AccountFingerprint) => string;
+export type AutomationEvasionBuilder = () => string;
 
 export function json(value: unknown): string {
   return JSON.stringify(value);

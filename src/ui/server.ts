@@ -22,6 +22,7 @@ import type { ActionLimits } from '../core/rate-limiter.js';
 import {
   clearSession,
   ensureSignalFireDir,
+  hasPersistentProfile,
   isSessionFresh,
   markUserDataDirValidated,
   readMetadata,
@@ -30,7 +31,7 @@ import type { AccountId, PostResult } from '../core/types.js';
 import { REDESIGNED_APP_HTML } from './app-html.js';
 
 const POSTING_PLATFORMS = ['tiktok', 'x', 'facebook', 'linkedin', 'youtube', 'instagram'] as const;
-type PostingPlatform = (typeof POSTING_PLATFORMS)[number];
+export type PostingPlatform = (typeof POSTING_PLATFORMS)[number];
 
 const LOGIN_URLS: Record<PostingPlatform, string> = {
   tiktok: 'https://www.tiktok.com/login',
@@ -162,6 +163,13 @@ function releasePostingLock(accountId: string): void {
 function isPostingActive(accountId: string): boolean {
   return (activePosting.get(accountId) ?? 0) > 0;
 }
+
+function findLoginFlowId(platform: PostingPlatform, accountId: string): string | null {
+  for (const [flowId, flow] of loginFlows) {
+    if (flow.platform === platform && flow.accountId === accountId) return flowId;
+  }
+  return null;
+}
 let processingDueQueue = false;
 const DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS = 120;
 const DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS = 300;
@@ -266,9 +274,22 @@ function formString(form: FormData, key: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function coerceBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (['on', 'true', '1', 'yes'].includes(normalized)) return true;
+  if (['off', 'false', '0', 'no', ''].includes(normalized)) return false;
+  return undefined;
+}
+
+function optionalFormBool(form: FormData, key: string): boolean | undefined {
+  const values = form.getAll(key).filter((value): value is string => typeof value === 'string');
+  return coerceBoolean(values.at(-1));
+}
+
 function formBool(form: FormData, key: string): boolean {
-  const value = form.get(key);
-  return value === 'on' || value === 'true';
+  return optionalFormBool(form, key) ?? false;
 }
 
 function parseSchedule(raw: string | undefined): { at: Date } | undefined {
@@ -357,15 +378,20 @@ function defaultUiState(): UiState {
       allowDuet: true,
       allowStitch: true,
       useBrowserProfile: true,
+      spoofFingerprint: false,
     },
     overrideText: {},
     overrideEnabled: {},
   };
 }
 
+function hasOwn<T extends object>(value: T, key: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
 function mergeUiState(saved: UiState): UiState {
   const defaults = defaultUiState();
-  return {
+  const merged: UiState = {
     ...defaults,
     ...saved,
     fields: {
@@ -381,6 +407,13 @@ function mergeUiState(saved: UiState): UiState {
       ...(saved.overrideEnabled ?? {}),
     },
   };
+
+  if (!hasOwn(saved, 'account')) {
+    const { account: _account, ...withoutAccount } = merged;
+    return withoutAccount;
+  }
+
+  return merged;
 }
 
 async function loadUiState(): Promise<UiState> {
@@ -393,6 +426,15 @@ async function loadUiState(): Promise<UiState> {
     }
     throw err;
   }
+}
+
+async function readSavedSpoofFingerprint(): Promise<boolean> {
+  const state = await loadUiState();
+  return coerceBoolean(state.fields?.spoofFingerprint) ?? false;
+}
+
+export async function resolveSpoofFingerprintForLaunch(value: unknown): Promise<boolean> {
+  return coerceBoolean(value) ?? (await readSavedSpoofFingerprint());
 }
 
 async function saveUiState(state: UiState): Promise<void> {
@@ -442,6 +484,17 @@ async function loadQueue(): Promise<QueueEntry[]> {
 
 async function saveQueue(entries: QueueEntry[]): Promise<void> {
   await writeJsonFile(getQueuePath(), entries);
+}
+
+function accountKey(accountId: string | undefined): string {
+  const trimmed = accountId?.trim() ?? '';
+  return trimmed.length > 0 ? sanitizeAccountId(trimmed) : '';
+}
+
+function sameAccount(left: string | undefined, right: string | undefined): boolean {
+  const leftKey = accountKey(left);
+  const rightKey = accountKey(right);
+  return leftKey.length > 0 && leftKey === rightKey;
 }
 
 function queueEntryForClient(entry: QueueEntry): QueueEntryForClient {
@@ -661,7 +714,7 @@ async function buildStatusRow(platform: PostingPlatform, accountId: string): Pro
     return {
       platform,
       account: accountId,
-      session: 'none',
+      session: (await hasPersistentProfile(platform, accountId)) ? 'stale' : 'none',
       lastValidated: null,
       postsPerHour: 0,
       postsPerDay: 0,
@@ -1000,7 +1053,7 @@ function buildRateLimits(form: FormData): ActionLimits | undefined {
   };
 }
 
-async function buildLaunchOptions(
+export async function buildLaunchOptions(
   platform: PostingPlatform,
   accountId: string,
   form: FormData,
@@ -1014,6 +1067,9 @@ async function buildLaunchOptions(
     MAX_SLOW_MO_MS,
   );
   if (slowMo !== undefined) launchOptions.slowMo = slowMo;
+  launchOptions.spoofFingerprint = await resolveSpoofFingerprintForLaunch(
+    optionalFormBool(form, 'spoofFingerprint'),
+  );
 
   return launchOptions;
 }
@@ -1359,7 +1415,7 @@ export async function deleteAccount(
   }
 
   for (const flow of loginFlows.values()) {
-    if (flow.accountId === accountId) {
+    if (sameAccount(flow.accountId, accountId)) {
       return {
         ok: false,
         error: 'Browser is currently open for this account. Close it first.',
@@ -1368,14 +1424,10 @@ export async function deleteAccount(
   }
 
   const allAccounts = await listKnownAccounts();
-  const canonicalTarget = sanitizeAccountId(accountId);
-  const wouldRemainAfterDelete = allAccounts.filter(
-    (a) => sanitizeAccountId(a) !== canonicalTarget,
-  );
+  const wouldRemainAfterDelete = allAccounts.filter((a) => !sameAccount(a, accountId));
   if (wouldRemainAfterDelete.length === 0) {
     const uiState = await loadUiState();
-    const canonicalActive = sanitizeAccountId(uiState.account ?? '');
-    if (canonicalActive === canonicalTarget) {
+    if (sameAccount(uiState.account, accountId)) {
       return {
         ok: false,
         error: 'Cannot delete the last remaining account. Create another account first.',
@@ -1472,16 +1524,25 @@ export async function deleteAccount(
     }
   }
 
-  // Clear state.json account field if it matches the deleted account so it does
-  // not re-appear in listKnownAccounts on the next /api/accounts call.
+  try {
+    const history = await loadHistory();
+    const keptHistory = history.filter((entry) => !sameAccount(entry.account, accountId));
+    if (keptHistory.length !== history.length) await saveHistory(keptHistory);
+
+    const queue = await loadQueue();
+    const keptQueue = queue.filter((entry) => !sameAccount(entry.account, accountId));
+    if (keptQueue.length !== queue.length) await saveQueue(keptQueue);
+  } catch {
+    // Non-fatal: account file deletion still needs to proceed.
+  }
+
+  // Move the UI away from the deleted account so a later refresh cannot
+  // repopulate the account picker from stale saved state.
   try {
     const uiState = await loadUiState();
-    if (
-      uiState.account !== undefined &&
-      sanitizeAccountId(uiState.account) === sanitizeAccountId(accountId)
-    ) {
-      const { account: _removed, ...rest } = uiState;
-      await saveUiState(rest);
+    if (sameAccount(uiState.account, accountId)) {
+      const nextAccount = wouldRemainAfterDelete[0] ?? '';
+      await saveUiState({ ...uiState, account: nextAccount });
     }
   } catch {
     // Non-fatal: state.json update is best-effort
@@ -1494,6 +1555,7 @@ async function startLogin(
   platform: PostingPlatform,
   accountId: string,
   _useBrowserProfile: boolean,
+  spoofFingerprint?: unknown,
 ): Promise<string> {
   for (const [flowId, flow] of loginFlows) {
     if (flow.platform === platform && flow.accountId === accountId) {
@@ -1502,7 +1564,11 @@ async function startLogin(
     }
   }
 
-  const launchOptions: LaunchOptions = { platform, accountId };
+  const launchOptions: LaunchOptions = {
+    platform,
+    accountId,
+    spoofFingerprint: await resolveSpoofFingerprintForLaunch(spoofFingerprint),
+  };
 
   const { context, close } = await launchBrowser(launchOptions);
   const page = context.pages()[0] ?? (await context.newPage());
@@ -1524,15 +1590,30 @@ async function finishLogin(flowId: string): Promise<void> {
   const flow = loginFlows.get(flowId);
   if (flow === undefined) throw new Error('Login flow was not found');
 
-  const authModule = (await import(`../platforms/${flow.platform}/auth.js`)) as {
-    isLoggedIn?: (page: Page) => Promise<boolean>;
-  };
-  const loggedIn = await authModule.isLoggedIn?.(flow.page);
-  if (loggedIn !== true) {
+  const loggedIn = await verifyLogin(flowId);
+  if (!loggedIn) {
     throw new Error(
       `Could not verify the ${flow.platform} session yet. The account still appears logged out.`,
     );
   }
+
+  await saveLogin(flowId);
+}
+
+async function verifyLogin(flowId: string): Promise<boolean> {
+  const flow = loginFlows.get(flowId);
+  if (flow === undefined) throw new Error('Login flow was not found');
+
+  const authModule = (await import(`../platforms/${flow.platform}/auth.js`)) as {
+    isLoggedIn?: (page: Page) => Promise<boolean>;
+  };
+  const loggedIn = await authModule.isLoggedIn?.(flow.page);
+  return loggedIn === true;
+}
+
+async function saveLogin(flowId: string): Promise<void> {
+  const flow = loginFlows.get(flowId);
+  if (flow === undefined) throw new Error('Login flow was not found');
 
   await markUserDataDirValidated(flow.platform, flow.accountId);
   await flow.close();
@@ -1612,6 +1693,7 @@ async function startCredentialLogin(
   identity: string,
   password: string,
   _useBrowserProfile: boolean,
+  spoofFingerprint?: unknown,
 ): Promise<{ saved: boolean; flowId?: string }> {
   if (identity.trim().length === 0) throw new Error('Email or username is required');
   if (password.length === 0) throw new Error('Password is required');
@@ -1623,7 +1705,11 @@ async function startCredentialLogin(
     }
   }
 
-  const launchOptions: LaunchOptions = { platform, accountId };
+  const launchOptions: LaunchOptions = {
+    platform,
+    accountId,
+    spoofFingerprint: await resolveSpoofFingerprintForLaunch(spoofFingerprint),
+  };
 
   const { context, close } = await launchBrowser(launchOptions);
   const page = context.pages()[0] ?? (await context.newPage());
@@ -1740,12 +1826,27 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       platform?: unknown;
       account?: unknown;
       useBrowserProfile?: unknown;
+      spoofFingerprint?: unknown;
     }>(req);
     if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
     const accountId = typeof body.account === 'string' ? body.account.trim() : '';
     if (accountId.length === 0) throw new Error('Account is required');
-    const flowId = await startLogin(body.platform, accountId, body.useBrowserProfile === true);
+    const flowId = await startLogin(
+      body.platform,
+      accountId,
+      body.useBrowserProfile === true,
+      body.spoofFingerprint,
+    );
     sendJson(res, 200, { ok: true, flowId });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/login/active') {
+    const platform = url.searchParams.get('platform');
+    const accountId = url.searchParams.get('account')?.trim() ?? '';
+    if (!isPostingPlatform(platform)) throw new Error('Choose a supported platform');
+    if (accountId.length === 0) throw new Error('Account is required');
+    sendJson(res, 200, { ok: true, flowId: findLoginFlowId(platform, accountId) });
     return;
   }
 
@@ -1753,6 +1854,21 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const body = await readJson<{ flowId?: unknown }>(req);
     if (typeof body.flowId !== 'string') throw new Error('Login flow is required');
     await finishLogin(body.flowId);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/login/verify') {
+    const body = await readJson<{ flowId?: unknown }>(req);
+    if (typeof body.flowId !== 'string') throw new Error('Login flow is required');
+    sendJson(res, 200, { ok: true, loggedIn: await verifyLogin(body.flowId) });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/login/save') {
+    const body = await readJson<{ flowId?: unknown }>(req);
+    if (typeof body.flowId !== 'string') throw new Error('Login flow is required');
+    await saveLogin(body.flowId);
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -1813,6 +1929,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       identity?: unknown;
       password?: unknown;
       useBrowserProfile?: unknown;
+      spoofFingerprint?: unknown;
     }>(req);
     if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
     const accountId = typeof body.account === 'string' ? body.account.trim() : '';
@@ -1831,8 +1948,19 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       body.identity,
       body.password,
       body.useBrowserProfile === true,
+      body.spoofFingerprint,
     );
     sendJson(res, 200, { ok: true, ...result });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/session/verify') {
+    const body = await readJson<{ platform?: unknown; account?: unknown }>(req);
+    if (!isPostingPlatform(body.platform)) throw new Error('Choose a supported platform');
+    const accountId = typeof body.account === 'string' ? body.account.trim() : '';
+    if (accountId.length === 0) throw new Error('Account is required');
+    await markUserDataDirValidated(body.platform, accountId as AccountId);
+    sendJson(res, 200, { ok: true });
     return;
   }
 

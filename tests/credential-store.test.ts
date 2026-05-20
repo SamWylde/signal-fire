@@ -83,4 +83,33 @@ describe('credential store', () => {
     );
     expect(credentialsPath('facebook', 'Thomas Darby')).toContain('Thomas Darby');
   });
+
+  it('loads legacy compact credential files for labels with spaces', async () => {
+    await writeStoredCredentials({
+      platform: 'facebook',
+      accountId: 'ThomasDarby',
+      identity: 'person@example.com',
+      password: 'saved-password',
+    });
+
+    await expect(readStoredCredentials('facebook', 'Thomas Darby')).resolves.toMatchObject({
+      platform: 'facebook',
+      identity: 'person@example.com',
+      password: 'saved-password',
+    });
+  });
+
+  it('clears legacy credential variants for labels with spaces', async () => {
+    await writeStoredCredentials({
+      platform: 'facebook',
+      accountId: 'ThomasDarby',
+      identity: 'person@example.com',
+      password: 'saved-password',
+    });
+
+    await clearStoredCredentials('facebook', 'Thomas Darby');
+
+    await expect(readStoredCredentials('facebook', 'Thomas Darby')).resolves.toBeNull();
+    await expect(readStoredCredentials('facebook', 'ThomasDarby')).resolves.toBeNull();
+  });
 });

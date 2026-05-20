@@ -17,13 +17,14 @@ import { buildScript as plugins } from './plugins.js';
 import { buildScript as screen } from './screen.js';
 import { buildScript as speech } from './speech.js';
 import { buildScript as storage } from './storage.js';
-import type { EvasionBuilder } from './utils.js';
+import type { AutomationEvasionBuilder, EvasionBuilder } from './utils.js';
 import { buildScript as webdriver } from './webdriver.js';
 import { buildScript as webgl } from './webgl.js';
 import { buildScript as webgpu } from './webgpu.js';
 
-const EVASIONS: EvasionBuilder[] = [
-  webdriver,
+const AUTOMATION_EVASIONS: AutomationEvasionBuilder[] = [webdriver, iframeContentWindow];
+
+const IDENTITY_EVASIONS: EvasionBuilder[] = [
   webgl,
   canvas,
   canvasText,
@@ -39,17 +40,30 @@ const EVASIONS: EvasionBuilder[] = [
   battery,
   storage,
   webgpu,
-  iframeContentWindow,
   mediaCodecs,
   permissions,
   screen,
 ];
 
+interface FingerprintEvasionOptions {
+  fingerprint?: AccountFingerprint | undefined;
+  spoofFingerprint?: boolean;
+}
+
 export async function applyFingerprintEvasions(
   context: BrowserContext,
-  fp: AccountFingerprint,
+  options: FingerprintEvasionOptions = {},
 ): Promise<void> {
-  for (const buildScript of EVASIONS) {
-    await context.addInitScript({ content: buildScript(fp) });
+  for (const buildScript of AUTOMATION_EVASIONS) {
+    await context.addInitScript({ content: buildScript() });
+  }
+
+  if (options.spoofFingerprint !== true) return;
+  if (options.fingerprint === undefined) {
+    throw new Error('A fingerprint is required when spoofFingerprint is enabled');
+  }
+
+  for (const buildScript of IDENTITY_EVASIONS) {
+    await context.addInitScript({ content: buildScript(options.fingerprint) });
   }
 }

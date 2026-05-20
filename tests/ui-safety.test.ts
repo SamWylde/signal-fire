@@ -4,11 +4,15 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { readMetadata } from '../src/core/session.js';
 import {
+  buildLaunchOptions,
   deleteAccount,
   parseCampaignDelayMs,
   parseCampaignDelayRangeMs,
+  resolveSpoofFingerprintForLaunch,
   shouldStopCampaignAfterError,
+  startUiServer,
 } from '../src/ui/server.js';
 
 describe('UI campaign safety helpers', () => {
@@ -121,5 +125,173 @@ describe('deleteAccount', () => {
     expect(result.ok).toBe(true);
     await expect(fs.access(ledgerFile)).rejects.toThrow();
     await expect(fs.access(profilesLegacyDir)).rejects.toThrow();
+  });
+
+  it('removes UI state, history, and queue references so a deleted account is not rediscovered', async () => {
+    const statePath = path.join(tmpDir, 'ui', 'state.json');
+    const historyPath = path.join(tmpDir, 'ui', 'history.json');
+    const queuePath = path.join(tmpDir, 'ui', 'queue.json');
+    const otherMetaPath = path.join(tmpDir, 'sessions', 'facebook', 'Thomas Darby.meta.json');
+
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, JSON.stringify({ account: 'main' }));
+    await fs.writeFile(
+      historyPath,
+      JSON.stringify([
+        { id: 'old-main', account: 'main', platform: 'facebook', ok: true, status: 'posted' },
+        {
+          id: 'keep-other',
+          account: 'Thomas Darby',
+          platform: 'facebook',
+          ok: true,
+          status: 'posted',
+        },
+      ]),
+    );
+    await fs.writeFile(
+      queuePath,
+      JSON.stringify([
+        { id: 'queued-main', account: 'main', targets: ['facebook'], status: 'queued' },
+        { id: 'queued-other', account: 'Thomas Darby', targets: ['facebook'], status: 'queued' },
+      ]),
+    );
+    await fs.mkdir(path.dirname(otherMetaPath), { recursive: true });
+    await fs.writeFile(otherMetaPath, JSON.stringify({ accountId: 'Thomas Darby' }));
+
+    const result = await deleteAccount('main');
+
+    expect(result.ok).toBe(true);
+
+    const state = JSON.parse(await fs.readFile(statePath, 'utf8')) as { account?: string };
+    const history = JSON.parse(await fs.readFile(historyPath, 'utf8')) as Array<{
+      account: string;
+    }>;
+    const queue = JSON.parse(await fs.readFile(queuePath, 'utf8')) as Array<{ account: string }>;
+
+    expect(state.account).toBe('Thomas Darby');
+    expect(history.map((entry) => entry.account)).toEqual(['Thomas Darby']);
+    expect(queue.map((entry) => entry.account)).toEqual(['Thomas Darby']);
+  });
+});
+
+describe('manual session verification', () => {
+  let tmpDir: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sf-test-'));
+    originalHome = process.env.SIGNAL_FIRE_HOME;
+    process.env.SIGNAL_FIRE_HOME = tmpDir;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) {
+      process.env.SIGNAL_FIRE_HOME = undefined;
+    } else {
+      process.env.SIGNAL_FIRE_HOME = originalHome;
+    }
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('marks the selected account verified without requiring an active browser flow', async () => {
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/session/verify`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ platform: 'facebook', account: 'Thomas Darby' }),
+      });
+      const body = (await response.json()) as { ok?: boolean };
+
+      expect(response.status).toBe(200);
+      expect(body.ok).toBe(true);
+
+      const metadata = await readMetadata('facebook', 'Thomas Darby');
+      expect(metadata).toMatchObject({
+        platform: 'facebook',
+        accountId: 'Thomas Darby',
+        mode: 'userDataDir',
+      });
+      expect(Number.isNaN(new Date(metadata?.lastValidated ?? '').getTime())).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+});
+
+describe('spoof fingerprint launch setting', () => {
+  let tmpDir: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sf-test-'));
+    originalHome = process.env.SIGNAL_FIRE_HOME;
+    process.env.SIGNAL_FIRE_HOME = tmpDir;
+  });
+
+  afterEach(async () => {
+    if (originalHome === undefined) {
+      process.env.SIGNAL_FIRE_HOME = undefined;
+    } else {
+      process.env.SIGNAL_FIRE_HOME = originalHome;
+    }
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  async function writeState(state: unknown): Promise<void> {
+    const statePath = path.join(tmpDir, 'ui', 'state.json');
+    await fs.mkdir(path.dirname(statePath), { recursive: true });
+    await fs.writeFile(statePath, JSON.stringify(state), 'utf8');
+  }
+
+  it('defaults the UI state to real-machine mode', async () => {
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/state`);
+      const body = (await response.json()) as {
+        state: { fields?: { spoofFingerprint?: boolean } };
+      };
+      expect(body.state.fields?.spoofFingerprint).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('adds the real-machine default to legacy state without the field', async () => {
+    await writeState({ account: 'Thomas Darby', fields: { slowMoMs: '25' } });
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/state`);
+      const body = (await response.json()) as {
+        state: { fields?: { spoofFingerprint?: boolean; slowMoMs?: string } };
+      };
+      expect(body.state.fields?.slowMoMs).toBe('25');
+      expect(body.state.fields?.spoofFingerprint).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('parses the campaign form field before falling back to saved state', async () => {
+    await writeState({ fields: { spoofFingerprint: true } });
+
+    const disabledForm = new FormData();
+    disabledForm.set('spoofFingerprint', 'false');
+    const disabledOptions = await buildLaunchOptions('facebook', 'Thomas Darby', disabledForm);
+    expect(disabledOptions.spoofFingerprint).toBe(false);
+
+    const enabledForm = new FormData();
+    enabledForm.set('spoofFingerprint', 'false');
+    enabledForm.append('spoofFingerprint', 'true');
+    const enabledOptions = await buildLaunchOptions('facebook', 'Thomas Darby', enabledForm);
+    expect(enabledOptions.spoofFingerprint).toBe(true);
+  });
+
+  it('uses saved state only when the request omits the setting', async () => {
+    await writeState({ fields: { spoofFingerprint: true } });
+
+    await expect(resolveSpoofFingerprintForLaunch(undefined)).resolves.toBe(true);
+    await expect(resolveSpoofFingerprintForLaunch(false)).resolves.toBe(false);
   });
 });
