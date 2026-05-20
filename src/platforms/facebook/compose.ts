@@ -1,0 +1,207 @@
+import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
+import { jitterSleep } from '../../core/humanize.js';
+import { humanClick } from '../../core/mouse.js';
+import { FACEBOOK, buildFacebookPageSwitchSelector } from './selectors.js';
+
+export interface FacebookLocalizedLabels {
+  createPost: string;
+  post: string;
+  photoVideo: string;
+  addPhotosVideos: string;
+}
+
+export interface FacebookComposeInput {
+  // Full URL of the target Page or Profile composer context (e.g. https://www.facebook.com/<page-id>).
+  // We don't auto-resolve — caller must know the Page they want to post to.
+  pageUrl: string;
+  text: string;
+  // Image upload. Single image supported; multi-image not (FB modal varies; keep simple).
+  imagePath?: string;
+  localizedLabels?: Partial<FacebookLocalizedLabels>;
+  /** Where to post. 'personal' uses the logged-in user. 'page' switches to the named page first. */
+  postAs?: 'personal' | 'page';
+  /** Required when postAs='page'. Exact display name of the Facebook page (e.g., "GrantCue"). */
+  facebookPageName?: string;
+  /** When true, skips the final publish click. */
+  dryRun?: boolean;
+}
+
+async function clickFirstVisible(
+  page: Page,
+  locators: Locator[],
+  timeoutMs: number,
+): Promise<boolean> {
+  for (const locator of locators) {
+    const candidate = locator.first();
+    if (!(await isLocatorVisible(candidate, timeoutMs))) continue;
+    await humanClick(page, candidate);
+    return true;
+  }
+  return false;
+}
+
+async function setFirstAttachedFileInput(
+  locators: Locator[],
+  filePath: string,
+  timeoutMs: number,
+): Promise<void> {
+  let lastError: unknown = null;
+  for (const locator of locators) {
+    try {
+      const input = locator.first();
+      await input.waitFor({ state: 'attached', timeout: timeoutMs });
+      await input.setInputFiles(filePath);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw new Error(
+    `Could not attach Facebook image file: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
+// Drives the composer on an already-authenticated page. Throws on unrecoverable error.
+export async function createPost(page: Page, input: FacebookComposeInput): Promise<void> {
+  // --- Step 0: Switch to page identity (if requested) ---
+  if (
+    input.postAs === 'page' &&
+    input.facebookPageName !== undefined &&
+    input.facebookPageName.trim().length > 0
+  ) {
+    await page.goto(FACEBOOK.urls.home, { waitUntil: 'domcontentloaded' });
+    await jitterSleep(800, 0.4);
+
+    await humanClick(page, page.locator(FACEBOOK.selectors.profileSwitcher.triggerButton).first());
+    await page
+      .locator(FACEBOOK.selectors.profileSwitcher.quickSwitchList)
+      .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+
+    const switchSelector = buildFacebookPageSwitchSelector(input.facebookPageName.trim());
+    await humanClick(page, page.locator(switchSelector).first());
+    await page.waitForLoadState('networkidle').catch(() => undefined);
+    await jitterSleep(1000, 0.4);
+  }
+
+  // --- Step 1: Navigate ---
+  await page.goto(input.pageUrl, { waitUntil: 'domcontentloaded' });
+  await jitterSleep(1500, 0.6);
+
+  // --- Step 2: Click the inline "What's on your mind" placeholder to open the modal ---
+  const triggerClicked = await clickFirstVisible(
+    page,
+    [page.locator(FACEBOOK.selectors.composer.inlinePlaceholder)],
+    FACEBOOK.timeouts.shortMs,
+  ).catch(() => false);
+
+  if (!triggerClicked) {
+    throw new Error(
+      'Could not find Facebook inline create-post placeholder ("What\'s on your mind") — the page layout may have changed',
+    );
+  }
+
+  // --- Step 3: Wait for Stage 1 composer modal ---
+  await page
+    .locator(FACEBOOK.selectors.composer.modal)
+    .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+  await jitterSleep(800, 0.5);
+
+  // --- Step 4: Focus the Lexical text editor and insert text ---
+  const textEditor = page.locator(FACEBOOK.selectors.composer.textEditor).first();
+  await humanClick(page, textEditor);
+  // insertText is preferred over humanType because FB can drop chars with per-keystroke input.
+  await page.keyboard.insertText(input.text);
+  await jitterSleep(500, 0.5);
+
+  // --- Step 5: Image upload (if provided) ---
+  if (input.imagePath !== undefined) {
+    const photoClicked = await clickFirstVisible(
+      page,
+      [
+        page.locator(FACEBOOK.selectors.composer.modalPhotoVideo),
+        page.locator(FACEBOOK.selectors.composer.photoVideoButtonAria),
+      ],
+      FACEBOOK.timeouts.shortMs,
+    ).catch(() => false);
+
+    if (!photoClicked) {
+      throw new Error('Could not find Facebook photo/video button inside the composer modal');
+    }
+
+    // FB usually renders a hidden file input inside the dialog after clicking Photo/Video.
+    await setFirstAttachedFileInput(
+      [
+        page.locator(`${FACEBOOK.selectors.composer.modalOuter} input[type='file']`),
+        page.locator(`${FACEBOOK.selectors.composer.dialogForm} input[type='file']`),
+        page.locator(`${FACEBOOK.selectors.composer.dialogRole} input[type='file']`),
+      ],
+      input.imagePath,
+      FACEBOOK.timeouts.mediumMs,
+    );
+
+    // Wait for FB's preview render (inconsistent timing — flat sleep is simplest here)
+    await jitterSleep(3000, 0.5);
+  }
+
+  // --- Step 6: Dry-run guard — stop before clicking Next if dryRun is true ---
+  if (input.dryRun === true) {
+    console.log(
+      '[facebook] dry-run: typed content but did not click Next or Post — modal stays open for inspection',
+    );
+    return;
+  }
+
+  // --- Step 7: Click Next to advance to Stage 2 (Post settings) ---
+  const nextButton = page.locator(FACEBOOK.selectors.composer.nextButton).first();
+  await nextButton.waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+  await humanClick(page, nextButton);
+
+  // --- Step 8: Wait for Stage 2 settings dialog ---
+  await page
+    .locator(FACEBOOK.selectors.composer.settingsDialog)
+    .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+  await jitterSleep(600, 0.4);
+
+  // --- Step 9: Click Post/Publish button (three-tier fallback) ---
+  let postClickError: unknown = null;
+
+  try {
+    const clicked = await clickFirstVisible(
+      page,
+      [page.locator(FACEBOOK.selectors.composer.postSubmitButton)],
+      FACEBOOK.timeouts.mediumMs,
+    );
+    if (!clicked) throw new Error('Could not find Facebook Post/Publish button in settings dialog');
+    postClickError = null;
+  } catch (err) {
+    postClickError = err;
+  }
+
+  if (postClickError !== null) {
+    // Tier 2: Ctrl+Enter (most FB composers accept this)
+    try {
+      await page.keyboard.press('Control+Enter');
+      postClickError = null;
+    } catch (err) {
+      postClickError = err;
+    }
+  }
+
+  if (postClickError !== null) {
+    throw new Error(
+      `Failed to click Post button: ${postClickError instanceof Error ? postClickError.message : String(postClickError)}`,
+    );
+  }
+
+  // --- Step 10: Wait for submission confirmation ---
+  try {
+    await page
+      .locator(FACEBOOK.selectors.composer.settingsDialog)
+      .waitFor({ state: 'hidden', timeout: FACEBOOK.timeouts.longMs });
+  } catch {
+    throw new Error('Post may not have been published (settings dialog did not close)');
+  }
+}

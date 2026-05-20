@@ -1,0 +1,274 @@
+import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
+import { checkBlocked, humanType, jitterSleep } from '../../core/humanize.js';
+import { humanClick } from '../../core/mouse.js';
+import { INSTAGRAM } from './selectors.js';
+
+export interface InstagramComposeInput {
+  imagePath: string; // single image path (jpg/png/webp)
+  caption?: string; // clamped to INSTAGRAM.limits.maxCaptionLength internally
+  /** When true, executes all steps but skips the final Share click. */
+  dryRun?: boolean;
+}
+
+async function clickFirstUsable(
+  page: Page,
+  locators: Locator[],
+  timeoutMs: number,
+): Promise<boolean> {
+  for (const locator of locators) {
+    const candidate = locator.first();
+    if (!(await isLocatorVisible(candidate, timeoutMs))) continue;
+    try {
+      await humanClick(page, candidate);
+      return true;
+    } catch {
+      try {
+        await humanClick(
+          page,
+          candidate.locator(
+            'xpath=ancestor::*[self::button or self::a or @role="button" or @role="link"][1]',
+          ),
+        );
+        return true;
+      } catch {
+        // Try the next locator.
+      }
+    }
+  }
+  return false;
+}
+
+async function setFirstAttachedFileInput(
+  locators: Locator[],
+  filePath: string,
+  timeoutMs: number,
+): Promise<void> {
+  let lastError: unknown = null;
+  for (const locator of locators) {
+    try {
+      const input = locator.first();
+      await input.waitFor({ state: 'attached', timeout: timeoutMs });
+      await input.setInputFiles(filePath);
+      return;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw new Error(
+    `Could not attach Instagram image file: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
+function actionButtonLocators(page: Page, label: 'Next' | 'Share'): Locator[] {
+  return [
+    page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }),
+    page.locator(`xpath=//*[@role='button' and normalize-space()='${label}']`),
+    page.locator(
+      label === 'Next'
+        ? INSTAGRAM.selectors.composer.nextButton
+        : INSTAGRAM.selectors.composer.shareButton,
+    ),
+  ];
+}
+
+// Drives the new-post wizard on an authenticated page. Throws on unrecoverable error or
+// if Instagram surfaces an Action Blocked screen.
+export async function createPost(page: Page, input: InstagramComposeInput): Promise<void> {
+  const { shortMs, mediumMs, longMs } = INSTAGRAM.timeouts;
+
+  // --- Step 1: Navigate ---
+  await page.goto(INSTAGRAM.urls.home, { waitUntil: 'domcontentloaded' });
+  await jitterSleep(1500, 0.6);
+
+  // --- Step 2: Block check pre-flight ---
+  // Callers should treat a blocked signal as a cue to back off (e.g. via the rate limiter).
+  const preCheck = await checkBlocked(page, { extraPhrases: [...INSTAGRAM.blockPhrases] });
+  if (preCheck.blocked) {
+    throw new Error(`Instagram blocked: ${preCheck.reason}`);
+  }
+
+  // --- Step 3: Click "New post" trigger ---
+  // Primary: verified a[aria-label="New post"] from sidebar nav HTML (2026-05-20)
+  const triggerClicked = await clickFirstUsable(
+    page,
+    [
+      page.locator(INSTAGRAM.selectors.composer.newPostTrigger),
+      page.getByRole('link', { name: /^(Create|New post)$/i }),
+      page.getByRole('button', { name: /^(Create|New post)$/i }),
+      page.locator("a[href*='/create']"),
+    ],
+    shortMs,
+  );
+
+  if (!triggerClicked) {
+    throw new Error('Could not find New post trigger - selectors may be stale');
+  }
+
+  // --- Step 4: Wait for dialog modal ---
+  // Primary: verified createModal selector (2026-05-20); fallback to generic dialog
+  await page
+    .locator(INSTAGRAM.selectors.composer.createModal)
+    .or(page.locator(INSTAGRAM.selectors.composer.dialog))
+    .first()
+    .waitFor({ state: 'visible', timeout: mediumMs });
+  await jitterSleep(800, 0.4);
+
+  // --- Step 5: Detect Reel-vs-Post selection (if Instagram shows the choice) ---
+  // Some IG versions show this toggle; newer flows skip directly to the file picker.
+  try {
+    const postTypeLocator = page.locator(INSTAGRAM.selectors.composer.postTypePost).first();
+    const postTypeVisible = await isLocatorVisible(postTypeLocator, shortMs);
+    if (postTypeVisible) {
+      await humanClick(page, postTypeLocator);
+    }
+  } catch {
+    // Toggle not present — continue
+  }
+
+  // --- Step 6: Click "Select from computer" (if shown) ---
+  // Newer IG flows skip this and go straight to the hidden file input.
+  try {
+    const selectBtn = page.locator(INSTAGRAM.selectors.composer.selectFromComputerButton).first();
+    const selectVisible = await isLocatorVisible(selectBtn, shortMs);
+    if (selectVisible) {
+      await humanClick(page, selectBtn);
+    }
+  } catch {
+    // Button not present — continue
+  }
+
+  // --- Step 7: Upload file ---
+  // Primary: verified Stage 1 file input scoped to the Create new post modal (2026-05-20)
+  await setFirstAttachedFileInput(
+    [
+      page.locator(INSTAGRAM.selectors.composer.fileInput),
+      page.locator(INSTAGRAM.selectors.composer.createModal).locator("input[type='file']"),
+      page.locator(INSTAGRAM.selectors.composer.dialog).first().locator("input[type='file']"),
+      page.locator("input[type='file'][accept*='image']"),
+      page.locator("input[type='file']"),
+    ],
+    input.imagePath,
+    mediumMs,
+  );
+  await jitterSleep(2500, 0.5);
+
+  // --- Step 8: Advance through Crop / Filter / Adjust screens ---
+  // Wait for the Crop screen to appear after upload.
+  await page
+    .locator(INSTAGRAM.selectors.composer.cropScreenHeading)
+    .waitFor({ state: 'visible', timeout: 15_000 });
+
+  // Click Next until the Share button appears (caption screen) or we hit the max.
+  // Max 2: once from Crop to Edit, once from Edit to Caption.
+  const MAX_NEXT_CLICKS = 2;
+  for (let i = 0; i < MAX_NEXT_CLICKS; i++) {
+    const shareLocator = page.locator(INSTAGRAM.selectors.composer.shareButton);
+    if ((await shareLocator.count()) > 0 && (await shareLocator.first().isVisible())) {
+      // Reached the caption screen — stop clicking Next.
+      break;
+    }
+    const nextLocator = page.locator(INSTAGRAM.selectors.composer.nextButton);
+    await nextLocator.first().waitFor({ state: 'visible', timeout: 5_000 });
+    await humanClick(page, INSTAGRAM.selectors.composer.nextButton);
+    await page.waitForTimeout(800); // wait for screen transition
+  }
+
+  // --- Step 9: Fill caption ---
+  // Wait for the Share button to confirm we've reached the Caption screen.
+  await page
+    .locator(INSTAGRAM.selectors.composer.shareButton)
+    .waitFor({ state: 'visible', timeout: mediumMs });
+
+  if (input.caption !== undefined) {
+    let captionText = input.caption;
+    if (captionText.length > INSTAGRAM.limits.maxCaptionLength) {
+      process.stderr.write(
+        `[instagram] caption truncated from ${captionText.length} to ${INSTAGRAM.limits.maxCaptionLength} characters\n`,
+      );
+      captionText = captionText.slice(0, INSTAGRAM.limits.maxCaptionLength);
+    }
+    // Caption is a Lexical contenteditable div — click to focus, then type.
+    const captionLocator = page.locator(INSTAGRAM.selectors.composer.captionEditor).first();
+    await humanClick(page, captionLocator);
+    await humanType(captionLocator, captionText);
+  }
+
+  // --- Step 10: Click Share (three-tier fallback) ---
+  if (input.dryRun === true) {
+    console.log('[instagram] dry-run: typed caption but did not click Share');
+    return;
+  }
+
+  let shareError: unknown = null;
+
+  try {
+    const clicked = await clickFirstUsable(page, actionButtonLocators(page, 'Share'), mediumMs);
+    if (!clicked) throw new Error('Could not find Instagram Share button');
+    shareError = null;
+  } catch (err) {
+    shareError = err;
+  }
+
+  if (shareError !== null) {
+    // Tier 2: mouse click on the explicit Share fallback.
+    try {
+      const fallback = actionButtonLocators(page, 'Share')[0]?.first();
+      if (fallback === undefined) throw new Error('No Instagram Share fallback locator');
+      await humanClick(page, fallback);
+      shareError = null;
+    } catch (err) {
+      shareError = err;
+    }
+  }
+
+  if (shareError !== null) {
+    // Tier 3: focus caption area and Ctrl+Enter
+    try {
+      await humanClick(page, page.locator(INSTAGRAM.selectors.composer.captionEditor).first());
+      await page.keyboard.press('Control+Enter');
+      shareError = null;
+    } catch (err) {
+      shareError = err;
+    }
+  }
+
+  if (shareError !== null) {
+    throw new Error(
+      `Failed to click Share button via all three methods: ${shareError instanceof Error ? shareError.message : String(shareError)}`,
+    );
+  }
+
+  // --- Step 11: Confirmation ---
+  // Dialog close alone is not enough: blocked/error layouts can also dismiss the composer.
+  const confirmed = await page
+    .locator(INSTAGRAM.selectors.composer.shareConfirmation)
+    .waitFor({ state: 'visible', timeout: longMs })
+    .then(() => true)
+    .catch(() => false);
+
+  if (!confirmed) {
+    const blockCheck = await checkBlocked(page, {
+      extraPhrases: [...INSTAGRAM.blockPhrases],
+      perCheckTimeoutMs: 1000,
+    });
+    if (blockCheck.blocked) {
+      throw new Error(`Instagram blocked: ${blockCheck.reason}`);
+    }
+    throw new Error('Post may not have been published (no share confirmation appeared)');
+  }
+
+  await page
+    .locator(INSTAGRAM.selectors.composer.dialog)
+    .waitFor({ state: 'hidden', timeout: longMs })
+    .catch(() => undefined);
+
+  // --- Step 12: Post-publish block check ---
+  // IG sometimes silently rejects posts after submission — surface this as a thrown error.
+  const postCheck = await checkBlocked(page, { extraPhrases: [...INSTAGRAM.blockPhrases] });
+  if (postCheck.blocked) {
+    throw new Error(`Instagram blocked: ${postCheck.reason}`);
+  }
+}
