@@ -160,6 +160,7 @@ export interface UiServerHandle {
 
 const loginFlows = new Map<string, LoginFlow>();
 const activePosting = new Map<string, number>();
+let runLogWriteQueue: Promise<void> = Promise.resolve();
 
 export const MANUAL_VERIFY_PLATFORMS = ['linkedin', 'x', 'facebook', 'instagram'] as const;
 export type ManualVerifyPlatform = (typeof MANUAL_VERIFY_PLATFORMS)[number];
@@ -306,6 +307,7 @@ const MAX_SLOW_MO_MS = 5000;
 const UI_PORT_SEARCH_ATTEMPTS = 128;
 const HISTORY_LIMIT = 250;
 const RUN_LOG_LIMIT = 500;
+const RUN_LOG_DETAIL_LIMIT = 2048;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
 const SAFETY_STOP_PATTERNS = [
   'action blocked',
@@ -617,24 +619,56 @@ async function saveRunLog(entries: RunLogEntry[]): Promise<void> {
   await writeJsonFile(getRunLogPath(), entries.slice(0, RUN_LOG_LIMIT));
 }
 
-async function appendRunLog(entry: Omit<RunLogEntry, 'id' | 'at'>): Promise<RunLogEntry> {
+function truncateRunLogText(value: string | undefined): string | undefined {
+  if (value === undefined || value.length <= RUN_LOG_DETAIL_LIMIT) return value;
+  return `${value.slice(0, RUN_LOG_DETAIL_LIMIT)}... [truncated ${value.length - RUN_LOG_DETAIL_LIMIT} chars]`;
+}
+
+function prepareRunLogEntry(entry: Omit<RunLogEntry, 'id' | 'at'>): RunLogEntry {
   const fullEntry: RunLogEntry = {
     id: randomUUID(),
     at: new Date().toISOString(),
-    ...entry,
+    scope: entry.scope,
+    level: entry.level,
+    message: truncateRunLogText(entry.message) ?? '',
   };
-  await saveRunLog([fullEntry, ...(await loadRunLog())]);
-  const prefix = ['signal-fire', entry.scope, entry.platform, entry.account]
+  if (entry.account !== undefined) fullEntry.account = entry.account;
+  if (entry.platform !== undefined) fullEntry.platform = entry.platform;
+  const detail = truncateRunLogText(entry.detail);
+  if (detail !== undefined) fullEntry.detail = detail;
+  return fullEntry;
+}
+
+async function enqueueRunLogWrite(operation: () => Promise<void>): Promise<void> {
+  const next = runLogWriteQueue.catch(() => undefined).then(operation);
+  runLogWriteQueue = next.catch(() => undefined);
+  await next;
+}
+
+async function appendRunLog(entry: Omit<RunLogEntry, 'id' | 'at'>): Promise<RunLogEntry> {
+  const fullEntry = prepareRunLogEntry(entry);
+  const prefix = ['signal-fire', fullEntry.scope, fullEntry.platform, fullEntry.account]
     .filter((item): item is string => item !== undefined && item.length > 0)
     .join(':');
   process.stderr.write(
-    `[${prefix}] ${entry.level}: ${entry.message}${entry.detail ? ` - ${entry.detail}` : ''}\n`,
+    `[${prefix}] ${fullEntry.level}: ${fullEntry.message}${fullEntry.detail ? ` - ${fullEntry.detail}` : ''}\n`,
   );
+  try {
+    await enqueueRunLogWrite(async () => {
+      await saveRunLog([fullEntry, ...(await loadRunLog())]);
+    });
+  } catch (err) {
+    process.stderr.write(
+      `[signal-fire:system] warn: could not persist run log - ${err instanceof Error ? err.message : String(err)}\n`,
+    );
+  }
   return fullEntry;
 }
 
 async function clearRunLog(): Promise<void> {
-  await saveRunLog([]);
+  await enqueueRunLogWrite(async () => {
+    await saveRunLog([]);
+  });
 }
 
 function runLogsForClient(entries: RunLogEntry[], account?: string): RunLogEntry[] {

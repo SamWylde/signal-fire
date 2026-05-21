@@ -2124,11 +2124,11 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     document.getElementById('checkForm').addEventListener('click', checkComposeForm);
     document.getElementById('copyRunLog').addEventListener('click', function() {
       var button = document.getElementById('copyRunLog');
-      var text = runLogEntries.slice().reverse().map(runLogLine).join('\n');
+      var text = JSON.stringify(runLogEntries.slice().reverse(), null, 2);
       if (!text) return;
       try {
         navigator.clipboard.writeText(text).then(function() {
-          button.textContent = 'Copied';
+          button.textContent = 'Copied JSON';
           setTimeout(function() { button.textContent = 'Copy logs'; }, 1200);
         }).catch(function(err) {
           console.warn('Clipboard write failed:', err);
@@ -2140,6 +2140,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       }
     });
     document.getElementById('clearRunLog').addEventListener('click', async function() {
+      if (!window.confirm('Clear all run logs? This cannot be undone.')) return;
       try {
         await api('/api/logs/clear', { method: 'POST' });
         renderRunLogs([]);

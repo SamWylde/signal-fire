@@ -388,6 +388,9 @@ describe('manual campaign verification', () => {
     expect(REDESIGNED_APP_HTML).toContain('id="runLog"');
     expect(REDESIGNED_APP_HTML).toContain('id="copyRunLog"');
     expect(REDESIGNED_APP_HTML).toContain('/api/logs');
+    expect(REDESIGNED_APP_HTML).toContain("window.confirm('Clear all run logs?");
+    expect(REDESIGNED_APP_HTML).toContain('JSON.stringify(runLogEntries');
+    expect(REDESIGNED_APP_HTML).toContain('refreshRunLogs()');
     expect(REDESIGNED_APP_HTML).toContain('window.confirm');
     expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
     expect(REDESIGNED_APP_HTML).not.toContain('Ready check');
