@@ -59,7 +59,7 @@ export const FACEBOOK = {
       modalCloseButton: '[aria-label="Close composer dialog"][role="button"]',
       modalPrivacyTrigger: '[aria-label^="Edit privacy"][role="button"]',
       // The text editor — Lexical contenteditable, stable selector
-      textEditor: 'div[contenteditable="true"][data-lexical-editor="true"][role="textbox"]',
+      textEditor: '[role="dialog"][aria-modal="true"] div[contenteditable="true"][data-lexical-editor="true"][role="textbox"]',
       modalBackgroundOptions: '[aria-label="Show background options"][role="button"]',
       modalEmoji: '[aria-label="Emoji"][role="button"]',
       modalPhotoVideo: '[aria-label="Photo/video"][role="button"]',
