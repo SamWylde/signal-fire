@@ -518,6 +518,13 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     }
     .log.good { color: var(--moss); background: var(--moss-soft); }
     .log.bad { color: var(--rust); background: var(--rust-soft); }
+    .run-log {
+      min-height: 126px;
+      max-height: 220px;
+      background: #151515;
+      color: #f4efe4;
+      border-color: #2f2c28;
+    }
     .settings-grid { display: grid; grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr); gap: 16px; }
     .check-row {
       display: flex;
@@ -807,6 +814,19 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   </div>
                 </div>
               </div>
+
+              <div class="card">
+                <div class="card-head">
+                  <div class="eyebrow">Live run log</div>
+                  <div style="display:flex;gap:8px;align-items:center">
+                    <button id="copyRunLog" class="btn" type="button">Copy logs</button>
+                    <button id="clearRunLog" class="btn" type="button">Clear</button>
+                  </div>
+                </div>
+                <div style="padding:12px">
+                  <div id="runLog" class="log run-log">No run logs yet.</div>
+                </div>
+              </div>
             </section>
 
             <section class="pane preview-pane">
@@ -1091,6 +1111,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var latestStatusRows = [];
     var queuedEntries = [];
     var historyEntries = [];
+    var runLogEntries = [];
+    var runLogTimer = null;
     var activeView = 'compose';
     var accountEl = document.getElementById('account');
     var accountMirrorEl = document.getElementById('accountMirror');
@@ -1430,7 +1452,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var results = await Promise.allSettled([
         refreshStatus(),
         refreshHistory(),
-        refreshQueue()
+        refreshQueue(),
+        refreshRunLogs()
       ]);
       if (results[0] && results[0].status === 'rejected') markStatusUnavailable();
       reportSettledFailures(results, 'Could not refresh account data');
@@ -1631,6 +1654,55 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       if (!value) return '-';
       var date = new Date(value);
       return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+    }
+
+    function formatRunLogTime(value) {
+      var date = new Date(value);
+      return Number.isNaN(date.getTime()) ? '--:--:--' : date.toLocaleTimeString();
+    }
+
+    function runLogLine(entry) {
+      var pieces = [
+        '[' + formatRunLogTime(entry.at) + ']',
+        (entry.level || 'info').toUpperCase(),
+        (entry.scope || 'run').toUpperCase()
+      ];
+      if (entry.platform) pieces.push(platformNames[entry.platform] || entry.platform);
+      var line = pieces.join(' ') + ' - ' + (entry.message || '');
+      if (entry.detail) line += ' - ' + entry.detail;
+      return line;
+    }
+
+    function renderRunLogs(entries) {
+      runLogEntries = entries || [];
+      var el = document.getElementById('runLog');
+      if (runLogEntries.length === 0) {
+        el.textContent = 'No run logs yet.';
+        return;
+      }
+      el.textContent = runLogEntries.slice().reverse().map(runLogLine).join('\n');
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function refreshRunLogs() {
+      var account = currentAccount();
+      var suffix = account ? '?account=' + encodeURIComponent(account) : '';
+      var data = await api('/api/logs' + suffix);
+      renderRunLogs(data.entries || []);
+    }
+
+    function startRunLogPolling() {
+      window.clearInterval(runLogTimer);
+      refreshRunLogs().catch(function(err) { console.warn('Could not refresh run logs:', err); });
+      runLogTimer = window.setInterval(function() {
+        refreshRunLogs().catch(function(err) { console.warn('Could not refresh run logs:', err); });
+      }, 1500);
+    }
+
+    function stopRunLogPolling() {
+      window.clearInterval(runLogTimer);
+      runLogTimer = null;
+      refreshRunLogs().catch(function(err) { console.warn('Could not refresh run logs:', err); });
     }
 
     function updateLoginSessionStatus() {
@@ -1969,6 +2041,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       setBottom('Posting selected platforms sequentially...', '');
       setComposeActionBusy(true);
       var form = buildCampaignForm();
+      startRunLogPolling();
       try {
         await saveStateNow();
         var result = await api('/api/campaign', { method: 'POST', body: form });
@@ -1985,6 +2058,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         setBottom(err.message, 'bad');
       } finally {
         setComposeActionBusy(false);
+        stopRunLogPolling();
       }
     }
 
@@ -1993,6 +2067,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       setBottom('Preparing selected platforms for manual submit...', '');
       setComposeActionBusy(true);
       var form = buildCampaignForm();
+      startRunLogPolling();
       try {
         await saveStateNow();
         var result = await api('/api/campaign/manual', { method: 'POST', body: form });
@@ -2007,6 +2082,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         setBottom(err.message, 'bad');
       } finally {
         setComposeActionBusy(false);
+        stopRunLogPolling();
       }
     }
 
@@ -2046,6 +2122,32 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     document.getElementById('postSelectedTop').addEventListener('click', runCampaign);
     document.getElementById('manualVerifyTop').addEventListener('click', runManualVerify);
     document.getElementById('checkForm').addEventListener('click', checkComposeForm);
+    document.getElementById('copyRunLog').addEventListener('click', function() {
+      var button = document.getElementById('copyRunLog');
+      var text = runLogEntries.slice().reverse().map(runLogLine).join('\n');
+      if (!text) return;
+      try {
+        navigator.clipboard.writeText(text).then(function() {
+          button.textContent = 'Copied';
+          setTimeout(function() { button.textContent = 'Copy logs'; }, 1200);
+        }).catch(function(err) {
+          console.warn('Clipboard write failed:', err);
+          setBottom('Could not copy logs to clipboard.', 'bad');
+        });
+      } catch (err) {
+        console.warn('Clipboard write failed:', err);
+        setBottom('Could not copy logs to clipboard.', 'bad');
+      }
+    });
+    document.getElementById('clearRunLog').addEventListener('click', async function() {
+      try {
+        await api('/api/logs/clear', { method: 'POST' });
+        renderRunLogs([]);
+        setBottom('Run logs cleared.', 'good');
+      } catch (err) {
+        setBottom(err.message, 'bad');
+      }
+    });
     document.getElementById('saveDraft').addEventListener('click', function() {
       saveStateNow().then(function() { showToast('Draft saved', 'Local draft state updated.', 'good'); }).catch(function(err) { setBottom(err.message, 'bad'); });
     });
@@ -2417,7 +2519,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           loadCredentials(),
           refreshStatus(),
           refreshHistory(),
-          refreshQueue()
+          refreshQueue(),
+          refreshRunLogs()
         ]);
       })
       .then(function(results) {

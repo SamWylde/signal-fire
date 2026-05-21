@@ -368,6 +368,14 @@ describe('manual campaign verification', () => {
         entries?: Array<{ status?: string; detail?: string }>;
       };
       expect(historyBody.entries?.map((entry) => entry.status)).toEqual(['prepared', 'prepared']);
+
+      const logsResponse = await fetch(`${handle.url}/api/logs?account=main`);
+      const logsBody = (await logsResponse.json()) as {
+        entries?: Array<{ scope?: string; level?: string; message?: string }>;
+      };
+      expect(logsBody.entries?.some((entry) => entry.message === 'Manual prepare finished')).toBe(
+        true,
+      );
     } finally {
       await handle.close();
       expect(closeCount).toBe(1);
@@ -377,6 +385,9 @@ describe('manual campaign verification', () => {
   it('exposes manual UI controls and guards live posting', () => {
     expect(REDESIGNED_APP_HTML).toContain('id="manualVerifyTop"');
     expect(REDESIGNED_APP_HTML).toContain('/api/campaign/manual');
+    expect(REDESIGNED_APP_HTML).toContain('id="runLog"');
+    expect(REDESIGNED_APP_HTML).toContain('id="copyRunLog"');
+    expect(REDESIGNED_APP_HTML).toContain('/api/logs');
     expect(REDESIGNED_APP_HTML).toContain('window.confirm');
     expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
     expect(REDESIGNED_APP_HTML).not.toContain('Ready check');
