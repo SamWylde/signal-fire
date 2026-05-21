@@ -106,7 +106,7 @@ async function fillMetadata(
   await humanClick(page, titleBox);
   await page.keyboard.press(selectAllShortcut());
   await page.keyboard.press('Delete');
-  await humanType(titleBox, clampedTitle);
+  await humanType(titleBox, clampedTitle, { naturalCadence: true });
 
   if (description !== undefined) {
     const clampedDesc = description.slice(0, YOUTUBE.limits.maxDescriptionLength);
@@ -119,7 +119,7 @@ async function fillMetadata(
     await humanClick(page, descBox);
     await page.keyboard.press(selectAllShortcut());
     await page.keyboard.press('Delete');
-    await humanType(descBox, clampedDesc);
+    await humanType(descBox, clampedDesc, { naturalCadence: true });
   }
 }
 

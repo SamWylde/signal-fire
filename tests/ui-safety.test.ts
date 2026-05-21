@@ -382,6 +382,61 @@ describe('manual campaign verification', () => {
     }
   });
 
+  it('records debug artifact paths when manual preparation fails', async () => {
+    const page = {
+      url: () => 'https://x.com/compose/post',
+      screenshot: async (options: { path: string }) => {
+        await fs.writeFile(options.path, 'fake-png');
+      },
+      content: async () =>
+        '<html><script>secret()</script><body><div>Compose failed</div></body></html>',
+    };
+
+    setManualVerifyDriverForTests({
+      launch: async () => ({
+        context: {
+          pages: () => [page],
+          newPage: async () => page,
+          on: () => undefined,
+        } as never,
+        close: async () => undefined,
+      }),
+      isLoggedIn: async () => true,
+      compose: async () => {
+        throw new Error('selector drift');
+      },
+      markValidated: async () => undefined,
+    });
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/campaign/manual`, {
+        method: 'POST',
+        body: campaignForm(['x']),
+      });
+      const body = (await response.json()) as {
+        results?: Array<{ error?: string; detail?: string }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.results?.[0]?.error).toBe('selector drift');
+      expect(body.results?.[0]?.detail).toContain('https://x.com/compose/post');
+      expect(body.results?.[0]?.detail).toContain(path.join(tmpDir, 'ui', 'debug'));
+
+      const debugFiles = await fs.readdir(path.join(tmpDir, 'ui', 'debug'));
+      expect(debugFiles.some((file) => file.endsWith('.png'))).toBe(true);
+      const domFile = debugFiles.find((file) => file.endsWith('.txt'));
+      expect(domFile).toBeDefined();
+      if (domFile !== undefined) {
+        const domText = await fs.readFile(path.join(tmpDir, 'ui', 'debug', domFile), 'utf8');
+        expect(domText).toContain('Compose failed');
+        expect(domText).not.toContain('secret()');
+      }
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('exposes manual UI controls and guards live posting', () => {
     expect(REDESIGNED_APP_HTML).toContain('id="manualVerifyTop"');
     expect(REDESIGNED_APP_HTML).toContain('/api/campaign/manual');
@@ -390,7 +445,9 @@ describe('manual campaign verification', () => {
     expect(REDESIGNED_APP_HTML).toContain('/api/logs');
     expect(REDESIGNED_APP_HTML).toContain("window.confirm('Clear all run logs?");
     expect(REDESIGNED_APP_HTML).toContain('JSON.stringify(runLogEntries');
-    expect(REDESIGNED_APP_HTML).toContain('refreshRunLogs()');
+    expect(REDESIGNED_APP_HTML).toMatch(
+      /Promise\.allSettled\(\[\s*refreshAccounts\(\),\s*loadCredentials\(\),\s*refreshStatus\(\),\s*refreshHistory\(\),\s*refreshQueue\(\),\s*refreshRunLogs\(\)\s*\]\)/,
+    );
     expect(REDESIGNED_APP_HTML).toContain('window.confirm');
     expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
     expect(REDESIGNED_APP_HTML).not.toContain('Ready check');

@@ -72,6 +72,142 @@ export interface HumanTypeOptions {
   thinkProbability?: number;
   thinkRange?: [number, number];
   clearFirst?: boolean;
+  naturalCadence?: boolean;
+  rng?: () => number;
+}
+
+export type HumanTypingStepKind = 'word' | 'space' | 'punctuation' | 'linebreak' | 'symbol';
+
+export interface HumanTypingStep {
+  text: string;
+  keyDelayMs: number;
+  keyDelayMsByChar: number[];
+  delayAfterMs: number;
+  kind: HumanTypingStepKind;
+}
+
+function randomFromRange(min: number, max: number, rng: () => number): number {
+  return min + (max - min) * rng();
+}
+
+function biasedLowFromRange(min: number, max: number, rng: () => number): number {
+  const sample = rng();
+  return min + (max - min) * sample * sample;
+}
+
+function isWhitespace(ch: string): boolean {
+  return ch === ' ' || ch === '\t';
+}
+
+function isLinebreak(ch: string): boolean {
+  return ch === '\n' || ch === '\r';
+}
+
+function isPunctuation(ch: string): boolean {
+  return /[.,!?;:]/.test(ch);
+}
+
+function isSentenceEnd(ch: string): boolean {
+  return /[.!?]/.test(ch);
+}
+
+function isWordBurstChar(ch: string): boolean {
+  return !isWhitespace(ch) && !isLinebreak(ch) && !isPunctuation(ch);
+}
+
+export function buildNaturalTypingPlan(
+  text: string,
+  options?: Pick<HumanTypeOptions, 'delayRange' | 'thinkProbability' | 'thinkRange' | 'rng'>,
+): HumanTypingStep[] {
+  const rng = options?.rng ?? Math.random;
+  const delayRange = options?.delayRange ?? ([30, 80] as [number, number]);
+  const thinkProbability = options?.thinkProbability ?? 0.05;
+  const thinkRange = options?.thinkRange ?? ([600, 1500] as [number, number]);
+  const steps: HumanTypingStep[] = [];
+  const chars = [...text];
+  let wordsUntilThink = 2 + Math.floor(rng() * 3);
+
+  for (let i = 0; i < chars.length; ) {
+    const ch = chars[i] as string;
+
+    if (isLinebreak(ch)) {
+      const nextIsLfPair = ch === '\r' && chars[i + 1] === '\n';
+      const linebreak = nextIsLfPair ? '\r\n' : ch;
+      steps.push({
+        text: linebreak,
+        keyDelayMs: 0,
+        keyDelayMsByChar: [...linebreak].map(() => 0),
+        delayAfterMs: randomFromRange(250, 650, rng),
+        kind: 'linebreak',
+      });
+      i += nextIsLfPair ? 2 : 1;
+      continue;
+    }
+
+    if (isWhitespace(ch)) {
+      let value = ch;
+      i++;
+      while (i < chars.length && isWhitespace(chars[i] as string)) {
+        value += chars[i] as string;
+        i++;
+      }
+      steps.push({
+        text: value,
+        keyDelayMs: 0,
+        keyDelayMsByChar: [...value].map(() => 0),
+        delayAfterMs: randomFromRange(100, 300, rng),
+        kind: 'space',
+      });
+      continue;
+    }
+
+    if (isPunctuation(ch)) {
+      let delayAfterMs = randomFromRange(200, 500, rng);
+      if (isSentenceEnd(ch) && rng() < 0.3) {
+        delayAfterMs += randomFromRange(400, 900, rng);
+      }
+      const keyDelayMs = biasedLowFromRange(Math.max(10, delayRange[0]), delayRange[1], rng);
+      steps.push({
+        text: ch,
+        keyDelayMs,
+        keyDelayMsByChar: [keyDelayMs],
+        delayAfterMs,
+        kind: 'punctuation',
+      });
+      i++;
+      continue;
+    }
+
+    let word = ch;
+    i++;
+    while (i < chars.length && isWordBurstChar(chars[i] as string)) {
+      word += chars[i] as string;
+      i++;
+    }
+
+    let delayAfterMs = rng() < 0.02 ? randomFromRange(40, 80, rng) : 0;
+    wordsUntilThink--;
+    if (wordsUntilThink <= 0) {
+      if (rng() < thinkProbability) {
+        delayAfterMs += randomFromRange(thinkRange[0], thinkRange[1], rng);
+      }
+      wordsUntilThink = 2 + Math.floor(rng() * 3);
+    }
+
+    const keyDelayMsByChar = [...word].map(() =>
+      biasedLowFromRange(delayRange[0], delayRange[1], rng),
+    );
+
+    steps.push({
+      text: word,
+      keyDelayMs: keyDelayMsByChar[0] ?? delayRange[0],
+      keyDelayMsByChar,
+      delayAfterMs,
+      kind: 'word',
+    });
+  }
+
+  return steps;
 }
 
 export async function humanType(
@@ -91,6 +227,19 @@ export async function humanType(
   if (clearFirst) {
     await page.keyboard.press(selectAllShortcut());
     await page.keyboard.press('Delete');
+  }
+
+  // Natural cadence is the default path. Set naturalCadence=false only for tests or
+  // platform fields that explicitly need the legacy uniform per-character behavior.
+  if (options?.naturalCadence !== false) {
+    for (const step of buildNaturalTypingPlan(text, options)) {
+      const chars = [...step.text];
+      for (const [index, ch] of chars.entries()) {
+        await page.keyboard.type(ch, { delay: step.keyDelayMsByChar[index] ?? step.keyDelayMs });
+      }
+      if (step.delayAfterMs > 0) await sleep(step.delayAfterMs);
+    }
+    return;
   }
 
   const chars = [...text];
