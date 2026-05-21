@@ -1069,12 +1069,15 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
               <div style="padding:14px;display:grid;gap:12px">
                 <label>Slow motion ms
                   <input name="slowMoMs" data-save="slowMoMs" inputmode="numeric" form="campaignForm">
+                  <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Pause inserted between non-typing browser actions (clicks, mouse moves, navigation). Higher values look more cautious; lower values are faster but more bot-like. Does not affect typing speed.</small>
                 </label>
                 <label>Typing speed <span id="typingSpeedValue" class="meta-line">200%</span>
                   <input type="range" name="typingSpeedPercent" data-save="typingSpeedPercent" min="50" max="1000" step="25" value="200" form="campaignForm">
+                  <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">How fast simulated human typing runs. 100% is a slow deliberate human; 1000% is hurried. Affects per-character keystroke timing on all platforms.</small>
                 </label>
                 <label>Word pause <span id="wordPauseValue" class="meta-line">40ms</span>
                   <input type="range" name="wordPauseMaxMs" data-save="wordPauseMaxMs" min="0" max="200" step="5" value="40" form="campaignForm">
+                  <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Maximum gap between words during typing, in milliseconds. The actual gap varies between 30% and 100% of this value. Set to 0 for tight back-to-back words.</small>
                 </label>
                 <input type="hidden" name="spoofFingerprint" value="false" form="campaignForm">
                 <label class="check-row"><input type="checkbox" id="spoofFingerprint" name="spoofFingerprint" value="true" data-save="spoofFingerprint" form="campaignForm"> Spoof browser fingerprint (stealth mode)</label>
