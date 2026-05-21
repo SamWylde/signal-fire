@@ -54,7 +54,7 @@ export const FACEBOOK = {
       inlineReel: '[aria-label="Reel"][role="button"]',
 
       // Stage 1: composer modal
-      modal: '[aria-label="Create post"][role="dialog"]',
+      modal: '[aria-label="Create post"][role="dialog"][aria-modal="true"]',
       modalOuter: '[role="dialog"][aria-modal="true"]',
       modalCloseButton: '[aria-label="Close composer dialog"][role="button"]',
       modalPrivacyTrigger: '[aria-label^="Edit privacy"][role="button"]',
