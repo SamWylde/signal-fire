@@ -196,11 +196,11 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
   await humanClick(page, textEditor);
   await jitterSleep(400, 0.4);
 
-  let focused = await textEditor.evaluate((el) => el === document.activeElement);
+  let focused = await textEditor.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
   if (!focused) {
     await textEditor.focus().catch(() => undefined);
     await jitterSleep(300, 0.4);
-    focused = await textEditor.evaluate((el) => el === document.activeElement);
+    focused = await textEditor.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
   }
   if (!focused) {
     throw new Error(
@@ -228,32 +228,32 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
 
   // --- Step 5: Image upload (if provided) ---
   if (input.imagePath !== undefined) {
-    const photoClicked = await clickFirstVisible(
-      page,
-      [
-        page.locator(FACEBOOK.selectors.composer.modalPhotoVideo),
-        page.locator(FACEBOOK.selectors.composer.photoVideoButtonAria),
-      ],
-      FACEBOOK.timeouts.shortMs,
-    ).catch(() => false);
-
-    if (!photoClicked) {
-      throw new Error('Could not find Facebook photo/video button inside the composer modal');
+    // The file input is in the DOM from the moment the modal opens. setInputFiles
+    // writes the file directly, skipping the native OS picker entirely.
+    const fileInput = page.locator(FACEBOOK.selectors.composer.modalFileInput).first();
+    await fileInput.waitFor({ state: 'attached', timeout: FACEBOOK.timeouts.mediumMs }).catch(() => undefined);
+    try {
+      await fileInput.setInputFiles(input.imagePath);
+    } catch (err) {
+      throw new Error(
+        `Could not attach Facebook image: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
-    // FB usually renders a hidden file input inside the dialog after clicking Photo/Video.
-    await setFirstAttachedFileInput(
-      [
-        page.locator(`${FACEBOOK.selectors.composer.modalOuter} input[type='file']`),
-        page.locator(`${FACEBOOK.selectors.composer.dialogForm} input[type='file']`),
-        page.locator(`${FACEBOOK.selectors.composer.dialogRole} input[type='file']`),
-      ],
-      input.imagePath,
-      FACEBOOK.timeouts.mediumMs,
-    );
+    // Verify the image actually attached. The "Attached media" group only renders
+    // after Facebook accepts the upload and previews it.
+    try {
+      await page
+        .locator(FACEBOOK.selectors.composer.attachedMediaGroup)
+        .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+    } catch {
+      throw new Error(
+        'Facebook image upload did not produce a preview within the expected time. The file may have been rejected or the upload stalled.',
+      );
+    }
 
-    // Wait for FB's preview render (inconsistent timing; flat sleep is simplest here).
-    await jitterSleep(3000, 0.5);
+    // Small settling pause for FB's preview render to finish.
+    await jitterSleep(1500, 0.5);
   }
 
   // --- Step 6: Dry-run guard: stop before clicking Next if dryRun is true ---

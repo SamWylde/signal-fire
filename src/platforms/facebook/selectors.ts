@@ -78,6 +78,13 @@ export const FACEBOOK = {
       postSubmitButton:
         '[aria-label="Post settings"][role="dialog"] div[aria-label="Post"][role="button"]',
 
+      // File input for image/video upload — already present in the DOM inside the modal,
+      // sibling to the "Photo/video" button. setInputFiles on this directly to avoid opening
+      // the native OS file picker.
+      modalFileInput: '[role="dialog"][aria-modal="true"] input[type="file"][accept*="image"]',
+      // Confirmation element that appears after successful image attach.
+      attachedMediaGroup: '[role="dialog"][aria-modal="true"] [aria-label="Attached media"][role="group"]',
+
       // Legacy fallback selectors (kept for photo/video upload path)
       dialogRole: "div[role='dialog']",
       dialogForm: "div[role='dialog'] form[method='POST']",
