@@ -15,6 +15,7 @@ export interface LinkedInComposeInput {
   /** Optional intro text typed into the share modal after clicking Next (article flow only) */
   shareIntro?: string;
   typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
   /** When true, executes all steps but skips the final publish/post click */
   dryRun?: boolean;
   onLog?: (message: string, detail?: string) => void;
@@ -34,11 +35,15 @@ function logLinkedIn(input: LinkedInComposeInput, message: string, detail?: stri
 function typingOptions(input: LinkedInComposeInput): {
   naturalCadence: true;
   typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
 } {
   return {
     naturalCadence: true,
     ...(input.typingSpeedMultiplier !== undefined && {
       typingSpeedMultiplier: input.typingSpeedMultiplier,
+    }),
+    ...(input.wordPauseMaxMs !== undefined && {
+      wordPauseMaxMs: input.wordPauseMaxMs,
     }),
   };
 }

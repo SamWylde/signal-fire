@@ -13,6 +13,7 @@ export interface XComposeInput {
   communityName?: string;
   communityId?: string;
   typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
   dryRun?: boolean;
   onLog?: (message: string, detail?: string) => void;
 }
@@ -260,11 +261,13 @@ async function typeAndVerifyXText(
   locator: Locator,
   text: string,
   typingSpeedMultiplier?: number,
+  wordPauseMaxMs?: number,
 ): Promise<void> {
   await humanType(locator, text, {
     clearFirst: true,
     naturalCadence: true,
     ...(typingSpeedMultiplier !== undefined && { typingSpeedMultiplier }),
+    ...(wordPauseMaxMs !== undefined && { wordPauseMaxMs }),
   });
   await jitterSleep(700, 0.4);
 
@@ -360,7 +363,7 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
     () => composer.textAreaLocator,
   );
   logX(input, 'Typing X post text');
-  await typeAndVerifyXText(page, textAreaLocator, text, input.typingSpeedMultiplier);
+  await typeAndVerifyXText(page, textAreaLocator, text, input.typingSpeedMultiplier, input.wordPauseMaxMs);
   logX(input, 'X post text verified');
   await jitterSleep(1200, 0.4);
 

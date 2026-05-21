@@ -7,6 +7,7 @@ export interface InstagramComposeInput {
   imagePath: string; // single image path (jpg/png/webp)
   caption?: string; // clamped to INSTAGRAM.limits.maxCaptionLength internally
   typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
   /** When true, executes all steps but skips the final Share click. */
   dryRun?: boolean;
   onLog?: (message: string, detail?: string) => void;
@@ -281,6 +282,9 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
       naturalCadence: true,
       ...(input.typingSpeedMultiplier !== undefined && {
         typingSpeedMultiplier: input.typingSpeedMultiplier,
+      }),
+      ...(input.wordPauseMaxMs !== undefined && {
+        wordPauseMaxMs: input.wordPauseMaxMs,
       }),
     });
   }
