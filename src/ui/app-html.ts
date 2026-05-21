@@ -262,6 +262,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       box-shadow: 0 0 0 1px var(--line-strong), 0 1px 2px rgba(0,0,0,.04);
     }
     .target-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+    .platform-block { display: flex; flex-direction: column; }
+    .platform-panel { margin-left: 1rem; border-left: 2px solid var(--line); padding: 10px 0 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+    .platform-chevron { margin-left: auto; font-size: 12px; color: var(--ink-3); transition: transform 0.15s; }
+    .platform-block[data-expanded="true"] .platform-chevron { transform: rotate(90deg); }
     .platform-square {
       width: 22px;
       height: 22px;
@@ -643,46 +647,234 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <button class="btn ghost" type="button" data-nav-jump="accounts" style="min-height:24px;padding:0 4px">Sessions</button>
               </div>
               <div class="card target-list" id="targetList">
-                <div class="target-row" data-platform="linkedin">
-                  <input type="checkbox" name="targets" value="linkedin">
-                  <div class="target-row-body">
-                    <span class="platform-square" style="background:#0a66c2">in</span>
-                    <span><span class="target-name">LinkedIn <span class="ovr-badge" data-ovr-badge="linkedin" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="linkedin">none</span></span></span>
+                <div class="platform-block" data-platform="linkedin" data-expanded="false">
+                  <div class="target-row platform-row-toggle" data-platform="linkedin">
+                    <input type="checkbox" name="targets" value="linkedin">
+                    <div class="target-row-body">
+                      <span class="platform-square" style="background:#0a66c2">in</span>
+                      <span><span class="target-name">LinkedIn <span class="ovr-badge" data-ovr-badge="linkedin" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="linkedin">none</span></span></span>
+                      <span class="platform-chevron">&#9658;</span>
+                    </div>
+                  </div>
+                  <div class="platform-panel" data-platform-panel="linkedin" hidden>
+                    <label>TEXT / CAPTION
+                      <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>TITLE
+                      <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
+                    <div class="row" style="display:flex;gap:1rem">
+                      <label style="flex:1">IMAGE
+                        <input type="file" name="linkedinImage" form="campaignForm" accept="image/*">
+                      </label>
+                      <label style="flex:1">VIDEO
+                        <input type="file" name="linkedinVideo" form="campaignForm" accept="video/*">
+                      </label>
+                    </div>
+                    <div class="two">
+                      <label>LinkedIn Target
+                        <select name="linkedinTarget" data-save="linkedinTarget">
+                          <option value="profile">Personal profile</option>
+                          <option value="company">Company page</option>
+                        </select>
+                      </label>
+                      <label>LinkedIn Company Page URL
+                        <input name="linkedinCompanyPageUrl" data-save="linkedinCompanyPageUrl">
+                      </label>
+                    </div>
+                    <label data-linkedin-company-id-row>LinkedIn Company ID <span id="linkedinCompanyIdOptional">(optional)</span>
+                      <input type="text" name="linkedinCompanyId" data-save="linkedinCompanyId" placeholder="Optional fallback; auto-detected from URL when possible">
+                      <span id="linkedinCompanyIdHint" style="display:block;color:var(--ink-3);font-size:11px;margin-top:4px"></span>
+                    </label>
+                    <label>Post Type
+                      <select name="linkedinPostType" data-save="linkedinPostType">
+                        <option value="post">Post (short share)</option>
+                        <option value="article">Article (long-form)</option>
+                      </select>
+                    </label>
+                    <label data-linkedin-article-only>Article Title
+                      <input type="text" name="linkedinTitle" data-save="linkedinTitle" placeholder="Article title (optional)">
+                    </label>
+                    <label data-linkedin-article-only>Share Intro
+                      <input type="text" name="linkedinShareIntro" data-save="linkedinShareIntro" placeholder="Intro text for share modal (optional)">
+                    </label>
                   </div>
                 </div>
-                <div class="target-row" data-platform="x">
-                  <input type="checkbox" name="targets" value="x">
-                  <div class="target-row-body">
-                    <span class="platform-square" style="background:#0a0a0a">X</span>
-                    <span><span class="target-name">X <span class="ovr-badge" data-ovr-badge="x" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="x">none</span></span></span>
+                <div class="platform-block" data-platform="x" data-expanded="false">
+                  <div class="target-row platform-row-toggle" data-platform="x">
+                    <input type="checkbox" name="targets" value="x">
+                    <div class="target-row-body">
+                      <span class="platform-square" style="background:#0a0a0a">X</span>
+                      <span><span class="target-name">X <span class="ovr-badge" data-ovr-badge="x" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="x">none</span></span></span>
+                      <span class="platform-chevron">&#9658;</span>
+                    </div>
+                  </div>
+                  <div class="platform-panel" data-platform-panel="x" hidden>
+                    <label>TEXT / CAPTION
+                      <textarea name="xText" data-save="xText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>TITLE
+                      <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
+                    <div class="row" style="display:flex;gap:1rem">
+                      <label style="flex:1">IMAGE
+                        <input type="file" name="xImage" form="campaignForm" accept="image/*">
+                      </label>
+                      <label style="flex:1">VIDEO
+                        <input type="file" name="xVideo" form="campaignForm" accept="video/*">
+                      </label>
+                    </div>
+                    <div class="two">
+                      <label>X Community
+                        <input name="communityName" data-save="communityName">
+                      </label>
+                      <label>X Community ID
+                        <input name="communityId" data-save="communityId">
+                      </label>
+                    </div>
                   </div>
                 </div>
-                <div class="target-row selected" data-platform="facebook">
-                  <input type="checkbox" name="targets" value="facebook" checked>
-                  <div class="target-row-body">
-                    <span class="platform-square" style="background:#1877f2">f</span>
-                    <span><span class="target-name">Facebook <span class="mini-chip">PAGE</span> <span class="ovr-badge" data-ovr-badge="facebook" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="facebook">none</span></span></span>
+                <div class="platform-block" data-platform="facebook" data-expanded="false">
+                  <div class="target-row selected platform-row-toggle" data-platform="facebook">
+                    <input type="checkbox" name="targets" value="facebook" checked>
+                    <div class="target-row-body">
+                      <span class="platform-square" style="background:#1877f2">f</span>
+                      <span><span class="target-name">Facebook <span class="mini-chip">PAGE</span> <span class="ovr-badge" data-ovr-badge="facebook" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="facebook">none</span></span></span>
+                      <span class="platform-chevron">&#9658;</span>
+                    </div>
+                  </div>
+                  <div class="platform-panel" data-platform-panel="facebook" hidden>
+                    <label>TEXT / CAPTION
+                      <textarea name="facebookText" data-save="facebookText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>TITLE
+                      <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
+                    <div class="row" style="display:flex;gap:1rem">
+                      <label style="flex:1">IMAGE
+                        <input type="file" name="facebookImage" form="campaignForm" accept="image/*">
+                      </label>
+                      <label style="flex:1">VIDEO
+                        <input type="file" name="facebookVideo" form="campaignForm" accept="video/*">
+                      </label>
+                    </div>
+                    <label>Facebook Page URL
+                      <input name="pageUrl" data-save="pageUrl" placeholder="https://www.facebook.com/your-page">
+                    </label>
+                    <label>Post As
+                      <select name="facebookPostAs" data-save="facebookPostAs">
+                        <option value="personal" selected>Personal</option>
+                        <option value="page">Page</option>
+                      </select>
+                    </label>
+                    <label data-facebook-page-only>Facebook Page Name
+                      <input type="text" name="facebookPageName" data-save="facebookPageName" placeholder="e.g. GrantCue">
+                    </label>
                   </div>
                 </div>
-                <div class="target-row" data-platform="instagram">
-                  <input type="checkbox" name="targets" value="instagram" checked>
-                  <div class="target-row-body">
-                    <span class="platform-square" style="background:#e1306c">IG</span>
-                    <span><span class="target-name">Instagram <span class="ovr-badge" data-ovr-badge="instagram" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="instagram">none</span></span></span>
+                <div class="platform-block" data-platform="instagram" data-expanded="false">
+                  <div class="target-row platform-row-toggle" data-platform="instagram">
+                    <input type="checkbox" name="targets" value="instagram" checked>
+                    <div class="target-row-body">
+                      <span class="platform-square" style="background:#e1306c">IG</span>
+                      <span><span class="target-name">Instagram <span class="ovr-badge" data-ovr-badge="instagram" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="instagram">none</span></span></span>
+                      <span class="platform-chevron">&#9658;</span>
+                    </div>
+                  </div>
+                  <div class="platform-panel" data-platform-panel="instagram" hidden>
+                    <label>TEXT / CAPTION
+                      <textarea name="instagramText" data-save="instagramText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>TITLE
+                      <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
+                    <div class="row" style="display:flex;gap:1rem">
+                      <label style="flex:1">IMAGE
+                        <input type="file" name="instagramImage" form="campaignForm" accept="image/*">
+                      </label>
+                      <label style="flex:1">VIDEO
+                        <input type="file" name="instagramVideo" form="campaignForm" accept="video/*">
+                      </label>
+                    </div>
                   </div>
                 </div>
-                <div class="target-row" data-platform="tiktok">
-                  <input type="checkbox" name="targets" value="tiktok">
-                  <div class="target-row-body">
-                    <span class="platform-square" style="background:#161823">TT</span>
-                    <span><span class="target-name">TikTok <span class="ovr-badge" data-ovr-badge="tiktok" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="tiktok">none</span></span></span>
+                <div class="platform-block" data-platform="tiktok" data-expanded="false">
+                  <div class="target-row platform-row-toggle" data-platform="tiktok">
+                    <input type="checkbox" name="targets" value="tiktok">
+                    <div class="target-row-body">
+                      <span class="platform-square" style="background:#161823">TT</span>
+                      <span><span class="target-name">TikTok <span class="ovr-badge" data-ovr-badge="tiktok" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="tiktok">none</span></span></span>
+                      <span class="platform-chevron">&#9658;</span>
+                    </div>
+                  </div>
+                  <div class="platform-panel" data-platform-panel="tiktok" hidden>
+                    <label>TEXT / CAPTION
+                      <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>TITLE
+                      <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
+                    <div class="row" style="display:flex;gap:1rem">
+                      <label style="flex:1">IMAGE
+                        <input type="file" name="tiktokImage" form="campaignForm" accept="image/*">
+                      </label>
+                      <label style="flex:1">VIDEO
+                        <input type="file" name="tiktokVideo" form="campaignForm" accept="video/*">
+                      </label>
+                    </div>
+                    <div class="two">
+                      <label>TikTok Visibility
+                        <select name="tiktokVisibility" data-save="tiktokVisibility">
+                          <option value="everyone">Everyone</option>
+                          <option value="friends">Friends</option>
+                          <option value="only_you">Only you</option>
+                        </select>
+                      </label>
+                      <label>Product ID
+                        <input name="productId" data-save="productId">
+                      </label>
+                    </div>
                   </div>
                 </div>
-                <div class="target-row" data-platform="youtube">
-                  <input type="checkbox" name="targets" value="youtube">
-                  <div class="target-row-body">
-                    <span class="platform-square" style="background:#ff0033">YT</span>
-                    <span><span class="target-name">YouTube <span class="ovr-badge" data-ovr-badge="youtube" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="youtube">none</span></span></span>
+                <div class="platform-block" data-platform="youtube" data-expanded="false">
+                  <div class="target-row platform-row-toggle" data-platform="youtube">
+                    <input type="checkbox" name="targets" value="youtube">
+                    <div class="target-row-body">
+                      <span class="platform-square" style="background:#ff0033">YT</span>
+                      <span><span class="target-name">YouTube <span class="ovr-badge" data-ovr-badge="youtube" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="youtube">none</span></span></span>
+                      <span class="platform-chevron">&#9658;</span>
+                    </div>
+                  </div>
+                  <div class="platform-panel" data-platform-panel="youtube" hidden>
+                    <label>TEXT / CAPTION
+                      <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>TITLE
+                      <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
+                    <div class="row" style="display:flex;gap:1rem">
+                      <label style="flex:1">IMAGE
+                        <input type="file" name="youtubeImage" form="campaignForm" accept="image/*">
+                      </label>
+                      <label style="flex:1">VIDEO
+                        <input type="file" name="youtubeVideo" form="campaignForm" accept="video/*">
+                      </label>
+                    </div>
+                    <div class="two">
+                      <label>YouTube Visibility
+                        <select name="youtubeVisibility" data-save="youtubeVisibility">
+                          <option value="private">Private</option>
+                          <option value="unlisted">Unlisted</option>
+                          <option value="public">Public</option>
+                        </select>
+                      </label>
+                      <label>Tags
+                        <input name="tags" data-save="tags" placeholder="comma separated">
+                      </label>
+                    </div>
+                    <label>Playlist
+                      <input name="playlist" data-save="playlist">
+                    </label>
                   </div>
                 </div>
               </div>
@@ -716,89 +908,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div class="caption-tools">
                   <label class="file-field"><input type="file" name="image" accept="image/*" data-file-label="imageFileName"><span>Image</span><span id="imageFileName" class="file-name">No file selected</span></label>
                   <label class="file-field"><input type="file" name="video" accept="video/*" data-file-label="videoFileName"><span>Video</span><span id="videoFileName" class="file-name">No file selected</span></label>
-                </div>
-              </div>
-
-              <div class="card">
-                <div class="card-head">
-                  <div class="eyebrow">Platform details</div>
-                  <span id="detailPlatformLabel" class="pill" style="min-width:80px;text-align:center">Facebook</span>
-                </div>
-                <div class="caption-box" id="platformDetails">
-                  <label data-platform-detail="facebook">Facebook Page URL
-                    <input name="pageUrl" data-save="pageUrl" placeholder="https://www.facebook.com/your-page">
-                  </label>
-                  <label data-platform-detail="facebook">Post As
-                    <select name="facebookPostAs" data-save="facebookPostAs">
-                      <option value="personal" selected>Personal</option>
-                      <option value="page">Page</option>
-                    </select>
-                  </label>
-                  <label data-platform-detail="facebook" data-facebook-page-only>Facebook Page Name
-                    <input type="text" name="facebookPageName" data-save="facebookPageName" placeholder="e.g. GrantCue">
-                  </label>
-                  <div class="two" data-platform-detail="linkedin">
-                    <label>LinkedIn Target
-                      <select name="linkedinTarget" data-save="linkedinTarget">
-                        <option value="profile">Personal profile</option>
-                        <option value="company">Company page</option>
-                      </select>
-                    </label>
-                    <label>LinkedIn Company Page URL
-                      <input name="linkedinCompanyPageUrl" data-save="linkedinCompanyPageUrl">
-                    </label>
-                  </div>
-                  <label data-platform-detail="linkedin" data-linkedin-company-id-row>LinkedIn Company ID <span id="linkedinCompanyIdOptional">(optional)</span>
-                    <input type="text" name="linkedinCompanyId" data-save="linkedinCompanyId" placeholder="Optional fallback; auto-detected from URL when possible">
-                    <span id="linkedinCompanyIdHint" style="display:block;color:var(--ink-3);font-size:11px;margin-top:4px"></span>
-                  </label>
-                  <label data-platform-detail="linkedin">Post Type
-                    <select name="linkedinPostType" data-save="linkedinPostType">
-                      <option value="post">Post (short share)</option>
-                      <option value="article">Article (long-form)</option>
-                    </select>
-                  </label>
-                  <label data-platform-detail="linkedin" data-linkedin-article-only>Article Title
-                    <input type="text" name="linkedinTitle" data-save="linkedinTitle" placeholder="Article title (optional)">
-                  </label>
-                  <label data-platform-detail="linkedin" data-linkedin-article-only>Share Intro
-                    <input type="text" name="linkedinShareIntro" data-save="linkedinShareIntro" placeholder="Intro text for share modal (optional)">
-                  </label>
-                  <div class="two" data-platform-detail="x">
-                    <label>X Community
-                      <input name="communityName" data-save="communityName">
-                    </label>
-                    <label>X Community ID
-                      <input name="communityId" data-save="communityId">
-                    </label>
-                  </div>
-                  <div class="two" data-platform-detail="tiktok">
-                    <label>TikTok Visibility
-                      <select name="tiktokVisibility" data-save="tiktokVisibility">
-                        <option value="everyone">Everyone</option>
-                        <option value="friends">Friends</option>
-                        <option value="only_you">Only you</option>
-                      </select>
-                    </label>
-                    <label>Product ID
-                      <input name="productId" data-save="productId">
-                    </label>
-                  </div>
-                  <div class="two" data-platform-detail="youtube">
-                    <label>YouTube Visibility
-                      <select name="youtubeVisibility" data-save="youtubeVisibility">
-                        <option value="private">Private</option>
-                        <option value="unlisted">Unlisted</option>
-                        <option value="public">Public</option>
-                      </select>
-                    </label>
-                    <label>Tags
-                      <input name="tags" data-save="tags" placeholder="comma separated">
-                    </label>
-                  </div>
-                  <label data-platform-detail="youtube">Playlist
-                    <input name="playlist" data-save="playlist">
-                  </label>
                 </div>
               </div>
 
@@ -2480,13 +2589,37 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
     useProfileEl.addEventListener('change', function() { updateAll(); saveStateSoon(); });
     document.getElementById('targetList').addEventListener('click', function(event) {
-      var row = event.target.closest('.target-row');
-      if (!row) return;
-      var platform = row.dataset.platform;
+      var toggle = event.target.closest('.platform-row-toggle');
+      if (!toggle) return;
+      if (event.target.closest('input[type="checkbox"]')) return;
+      var block = toggle.closest('.platform-block');
+      if (!block) return;
+      var platform = block.dataset.platform;
       if (!platform) return;
       selectedDetailPlatform = platform;
       updateTargetSelection();
+      var expanded = block.dataset.expanded === 'true';
+      block.dataset.expanded = expanded ? 'false' : 'true';
+      var panel = block.querySelector('.platform-panel');
+      if (panel) panel.hidden = expanded;
+      if (!expanded) prefillPlatformPanel(platform);
     });
+
+    function prefillPlatformPanel(platform) {
+      var baseText = document.getElementById('textInput') ? document.getElementById('textInput').value : '';
+      var baseTitleEl = document.querySelector('[name="title"]');
+      var baseTitle = baseTitleEl ? baseTitleEl.value : '';
+      var platformText = document.querySelector('[name="' + platform + 'Text"]');
+      var platformTitle = document.querySelector('[name="' + platform + 'BaseTitle"]');
+      if (platformText && !platformText.value && baseText) {
+        platformText.value = baseText;
+        platformText.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      if (platformTitle && !platformTitle.value && baseTitle) {
+        platformTitle.value = baseTitle;
+        platformTitle.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    }
 
     document.querySelectorAll('[data-file-label]').forEach(function(input) {
       input.addEventListener('change', function() {
