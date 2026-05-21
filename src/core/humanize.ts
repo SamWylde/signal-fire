@@ -285,10 +285,13 @@ export async function humanType(
   }
 
   for (const step of buildNaturalTypingPlan(text, options)) {
-    const chars = [...step.text];
-    for (const [index, ch] of chars.entries()) {
-      await page.keyboard.type(ch, { delay: step.keyDelayMsByChar[index] ?? step.keyDelayMs });
-    }
+    // Type the full step text in one call to avoid slowMo being applied per-character.
+    // Use the average of per-char delays so the overall pace is preserved.
+    const avgDelay =
+      step.keyDelayMsByChar.length > 0
+        ? step.keyDelayMsByChar.reduce((a, b) => a + b, 0) / step.keyDelayMsByChar.length
+        : step.keyDelayMs;
+    await page.keyboard.type(step.text, { delay: avgDelay });
     if (step.delayAfterMs > 0) await sleep(step.delayAfterMs);
   }
 }
