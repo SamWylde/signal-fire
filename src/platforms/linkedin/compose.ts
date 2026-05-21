@@ -242,7 +242,7 @@ async function createPostViaDirectUrl(
   page: Page,
   input: LinkedInComposeInput,
 ): Promise<LinkedInComposeResult> {
-  const { mediumMs, longMs } = LINKEDIN.timeouts;
+  const { shortMs, mediumMs, longMs } = LINKEDIN.timeouts;
   const resolved = resolveLinkedInPostUrl(input);
 
   logLinkedIn(input, 'Opening LinkedIn composer URL', resolved.url);
@@ -298,7 +298,7 @@ async function createPostViaDirectUrl(
 
       await page
         .locator(LINKEDIN.selectors.composer.imagePreview)
-        .waitFor({ state: 'visible', timeout: mediumMs })
+        .waitFor({ state: 'visible', timeout: 3000 })
         .catch(() => {
           // Preview may not appear immediately; continue.
         });
@@ -306,16 +306,28 @@ async function createPostViaDirectUrl(
       await jitterSleep(2500, 0.4);
 
       try {
-        await humanClick(page, page.getByRole('button', { name: 'Next' }));
+        const nextBtn = page.getByRole('button', { name: 'Next' });
+        await nextBtn.waitFor({ state: 'visible', timeout: 1500 });
+        await humanClick(page, nextBtn);
       } catch {
         // Not present.
       }
 
       try {
-        await humanClick(page, page.getByRole('button', { name: 'Done' }));
+        const doneBtn = page.getByRole('button', { name: 'Done' });
+        await doneBtn.waitFor({ state: 'visible', timeout: 1500 });
+        await humanClick(page, doneBtn);
       } catch {
         // Not present.
       }
+
+      // Re-query editor: LinkedIn may re-render the composer after media is attached.
+      editorLocator = page.locator(LINKEDIN.selectors.companyShare.textEditor).first();
+      const editorVisibleAfterMedia = await isLocatorVisible(editorLocator, shortMs);
+      if (!editorVisibleAfterMedia) {
+        editorLocator = page.locator(LINKEDIN.selectors.composer.textEditorAria).first();
+      }
+      logLinkedIn(input, 'LinkedIn image attached, proceeding to type text');
     }
 
     logLinkedIn(input, 'Typing LinkedIn post text');
@@ -558,7 +570,7 @@ export async function createPost(
 
     await page
       .locator(LINKEDIN.selectors.composer.imagePreview)
-      .waitFor({ state: 'visible', timeout: mediumMs })
+      .waitFor({ state: 'visible', timeout: 3000 })
       .catch(() => {
         // Preview may not appear immediately; continue.
       });
@@ -566,13 +578,17 @@ export async function createPost(
     await jitterSleep(2500, 0.4);
 
     try {
-      await humanClick(page, page.getByRole('button', { name: 'Next' }));
+      const nextBtn = page.getByRole('button', { name: 'Next' });
+      await nextBtn.waitFor({ state: 'visible', timeout: 1500 });
+      await humanClick(page, nextBtn);
     } catch {
       // Not present.
     }
 
     try {
-      await humanClick(page, page.getByRole('button', { name: 'Done' }));
+      const doneBtn = page.getByRole('button', { name: 'Done' });
+      await doneBtn.waitFor({ state: 'visible', timeout: 1500 });
+      await humanClick(page, doneBtn);
     } catch {
       // Not present.
     }
@@ -583,6 +599,7 @@ export async function createPost(
     if (!editorVisibleAfterMedia) {
       editorLocator = page.locator(LINKEDIN.selectors.composer.textEditor).first();
     }
+    logLinkedIn(resolvedInput, 'LinkedIn image attached, proceeding to type text');
   }
 
   logLinkedIn(resolvedInput, 'Typing LinkedIn composer text');
