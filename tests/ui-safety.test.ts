@@ -16,6 +16,7 @@ import {
   parseCampaignDelayMs,
   parseCampaignDelayRangeMs,
   resolveSpoofFingerprintForLaunch,
+  saveUploadedFile,
   setManualVerifyDriverForTests,
   shouldStopCampaignAfterError,
   startUiServer,
@@ -482,6 +483,44 @@ describe('manual campaign verification', () => {
     }
   });
 
+  it('prunes stale draft files when a new file is uploaded', async () => {
+    const uploadDir = path.join(tmpDir, 'uploads', 'draft-image');
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(path.join(uploadDir, 'stale-a.png'), 'old');
+    await fs.writeFile(path.join(uploadDir, 'stale-b.png'), 'old');
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const form = new FormData();
+      form.set('kind', 'image');
+      form.set('file', new File(['fresh'], 'fresh.png', { type: 'image/png' }));
+
+      const response = await fetch(`${handle.url}/api/draft-file`, {
+        method: 'POST',
+        body: form,
+      });
+
+      expect(response.status).toBe(200);
+      const entries = await fs.readdir(uploadDir);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatch(/fresh\.png$/);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('rejects uploaded files that exceed the 200 MB limit', async () => {
+    // Construct a fake File with a large .size without allocating 200 MB.
+    const fakeFile = {
+      name: 'big.mp4',
+      size: 200 * 1024 * 1024 + 1,
+      type: 'video/mp4',
+      arrayBuffer: async () => new ArrayBuffer(0),
+    } as unknown as File;
+
+    await expect(saveUploadedFile(fakeFile, 'draft-video')).rejects.toThrow(/200 MB/);
+  });
+
   it('exposes manual UI controls and guards live posting', () => {
     expect(REDESIGNED_APP_HTML).toContain('id="manualVerifyTop"');
     expect(REDESIGNED_APP_HTML).toContain('/api/campaign/manual');
@@ -497,6 +536,7 @@ describe('manual campaign verification', () => {
     expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
     expect(REDESIGNED_APP_HTML).toContain('data-linkedin-company-id-row');
     expect(REDESIGNED_APP_HTML).toContain('draftFiles');
+    expect(REDESIGNED_APP_HTML).toContain('draftUploadRequests');
     expect(REDESIGNED_APP_HTML).toContain('/api/draft-file');
     expect(REDESIGNED_APP_HTML).not.toContain('Dry run (test without');
     expect(REDESIGNED_APP_HTML).not.toContain('Ready check');
