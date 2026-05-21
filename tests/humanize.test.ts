@@ -110,13 +110,16 @@ describe('buildNaturalTypingPlan', () => {
   });
 
   it('samples fresh key delays inside a word burst', () => {
+    // rng call order: wordsUntilThink init (0.5), delayAfterMs check (0.5),
+    // 'a': r=0 (stumble), biasedLow sample=0.5→12.5, randomFromRange(80,200) sample=1→200; total=212.5
+    // 'b','c': rng exhausted → 0.5 each; r=0.5, biasedLow(10,20,0.5)=12.5
     const samples = [0.5, 0.5, 0, 0.5, 1];
     const plan = buildNaturalTypingPlan('abc', {
       delayRange: [10, 20],
       rng: () => samples.shift() ?? 0.5,
     });
 
-    expect(plan[0]?.keyDelayMsByChar).toEqual([10, 12.5, 20]);
+    expect(plan[0]?.keyDelayMsByChar).toEqual([212.5, 12.5, 12.5]);
   });
 
   it('does not introduce typo text into the plan', () => {
@@ -135,7 +138,7 @@ describe('buildNaturalTypingPlan', () => {
     const punctuation = plan.find((step) => step.kind === 'punctuation');
 
     expect(word?.keyDelayMs).toBeCloseTo(45);
-    expect(space?.delayAfterMs).toBeCloseTo(168.75);
+    expect(space?.delayAfterMs).toBeCloseTo(40);
     expect(punctuation?.delayAfterMs).toBeCloseTo(281.25);
   });
 
@@ -146,7 +149,43 @@ describe('buildNaturalTypingPlan', () => {
     const punctuation = plan.find((step) => step.kind === 'punctuation');
 
     expect(word?.keyDelayMs).toBeCloseTo(22.5);
-    expect(space?.delayAfterMs).toBeCloseTo(84.375);
+    expect(space?.delayAfterMs).toBeCloseTo(20);
     expect(punctuation?.delayAfterMs).toBeCloseTo(140.625);
+  });
+
+  it('produces high keystroke variance across a paragraph', () => {
+    let i = 0;
+    const seq = [0.01, 0.5, 0.99, 0.2, 0.7, 0.04, 0.1, 0.8, 0.3, 0.6, 0.05, 0.95, 0.4, 0.15, 0.85];
+    const rng = () => seq[(i++) % seq.length] as number;
+    const plan = buildNaturalTypingPlan(
+      'The quick brown fox jumps over the lazy dog and the rain in Spain stays mainly on the plain.',
+      { rng },
+    );
+    const delays: number[] = [];
+    for (const step of plan) {
+      if (step.kind === 'word') delays.push(...step.keyDelayMsByChar);
+    }
+    const mean = delays.reduce((a, b) => a + b, 0) / delays.length;
+    const variance = delays.reduce((a, b) => a + (b - mean) ** 2, 0) / delays.length;
+    const stdDev = Math.sqrt(variance);
+    expect(stdDev / mean).toBeGreaterThan(0.4);
+  });
+
+  it('respects wordPauseMaxMs for inter-word delays', () => {
+    const plan = buildNaturalTypingPlan('a b c', { rng: () => 0.999, wordPauseMaxMs: 40, typingSpeedMultiplier: 1 });
+    for (const step of plan) {
+      if (step.kind === 'space') {
+        expect(step.delayAfterMs).toBeGreaterThanOrEqual(40 * 0.3 - 0.001);
+        expect(step.delayAfterMs).toBeLessThanOrEqual(40 + 0.001);
+      }
+    }
+  });
+
+  it('clamps typing speed multiplier at the new ceiling of 10', () => {
+    const planAt10 = buildNaturalTypingPlan('hello', { rng: () => 0.5, typingSpeedMultiplier: 10 });
+    const planAt50 = buildNaturalTypingPlan('hello', { rng: () => 0.5, typingSpeedMultiplier: 50 });
+    const sumA = planAt10.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
+    const sumB = planAt50.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
+    expect(sumA).toBeCloseTo(sumB, 5);
   });
 });

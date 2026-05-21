@@ -270,7 +270,7 @@ describe('manual campaign verification', () => {
         typingSpeedMultiplier?: number;
       };
       expect(input.dryRun).toBe(true);
-      if (platform !== 'facebook') expect(input.typingSpeedMultiplier).toBe(3);
+      expect(input.typingSpeedMultiplier).toBe(3);
     }
   });
 
@@ -552,6 +552,8 @@ describe('manual campaign verification', () => {
     expect(REDESIGNED_APP_HTML).toContain("selectedDetailPlatform === 'facebook'");
     expect(REDESIGNED_APP_HTML).toContain('name="typingSpeedPercent"');
     expect(REDESIGNED_APP_HTML).toContain('id="typingSpeedSummary"');
+    expect(REDESIGNED_APP_HTML).toContain('name="wordPauseMaxMs"');
+    expect(REDESIGNED_APP_HTML).toContain('id="wordPauseSummary"');
     expect(REDESIGNED_APP_HTML).toContain('draftFiles');
     expect(REDESIGNED_APP_HTML).toContain('draftUploadRequests');
     expect(REDESIGNED_APP_HTML).toContain('/api/draft-file');

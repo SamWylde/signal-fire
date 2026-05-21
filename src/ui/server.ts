@@ -315,7 +315,10 @@ const DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS = 300;
 const DEFAULT_TYPING_SPEED_PERCENT = 200;
 const MAX_CAMPAIGN_DELAY_SECONDS = 3600;
 const MIN_TYPING_SPEED_PERCENT = 50;
-const MAX_TYPING_SPEED_PERCENT = 500;
+const MAX_TYPING_SPEED_PERCENT = 1000;
+const DEFAULT_WORD_PAUSE_MAX_MS = 40;
+const MIN_WORD_PAUSE_MAX_MS = 0;
+const MAX_WORD_PAUSE_MAX_MS = 200;
 const DEFAULT_POST_LIMIT_PER_HOUR = 4;
 const DEFAULT_POST_LIMIT_PER_DAY = 20;
 const MAX_POST_LIMIT = 1000;
@@ -1103,6 +1106,7 @@ async function buildPostInput(
   runImmediate?: boolean,
 ): Promise<unknown> {
   const typingSpeed = typingSpeedMultiplier(form);
+  const wordPause = wordPauseMaxMs(form);
   switch (platform) {
     case 'tiktok': {
       const videoPath = await requireFile(form, 'video', platform);
@@ -1116,6 +1120,8 @@ async function buildPostInput(
       return {
         videoPath,
         description,
+        typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(coverPath !== undefined && { coverPath }),
         ...(productId !== undefined && { productId }),
         ...(visibility !== undefined && { visibility }),
@@ -1134,6 +1140,7 @@ async function buildPostInput(
       return {
         text,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(mediaPaths.length > 0 && { mediaPaths }),
         ...(communityName !== undefined && { communityName }),
         ...(communityId !== undefined && { communityId }),
@@ -1160,6 +1167,8 @@ async function buildPostInput(
       return {
         pageUrl,
         text,
+        typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(imagePath !== undefined && { imagePath }),
         postAs,
         ...(facebookPageName !== undefined &&
@@ -1181,6 +1190,7 @@ async function buildPostInput(
       return {
         text,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(imagePath !== undefined && { imagePath }),
         target,
         ...(companyPageUrl !== undefined && { companyPageUrl }),
@@ -1211,6 +1221,7 @@ async function buildPostInput(
         videoPath,
         title,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(thumbnailPath !== undefined && { thumbnailPath }),
         ...(description !== undefined && { description }),
         ...(tags.length > 0 && { tags }),
@@ -1226,6 +1237,7 @@ async function buildPostInput(
       return {
         imagePath,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(caption !== undefined && { caption }),
       };
     }
@@ -1365,6 +1377,17 @@ function typingSpeedMultiplier(form: FormData): number {
   return percent / 100;
 }
 
+function wordPauseMaxMs(form: FormData): number {
+  return (
+    parseOptionalInt(
+      formString(form, 'wordPauseMaxMs'),
+      'Word pause',
+      MIN_WORD_PAUSE_MAX_MS,
+      MAX_WORD_PAUSE_MAX_MS,
+    ) ?? DEFAULT_WORD_PAUSE_MAX_MS
+  );
+}
+
 function buildRateLimits(form: FormData): ActionLimits | undefined {
   const perHour = parseOptionalInt(
     formString(form, 'postLimitPerHour'),
@@ -1438,6 +1461,7 @@ function buildCampaignInput(
   const description = formString(form, 'description') ?? text;
   const schedule = runImmediate === true ? undefined : parseSchedule(formString(form, 'schedule'));
   const typingSpeed = typingSpeedMultiplier(form);
+  const wordPause = wordPauseMaxMs(form);
 
   switch (platform) {
     case 'tiktok': {
@@ -1447,6 +1471,8 @@ function buildCampaignInput(
       return {
         videoPath: assets.videoPath,
         description,
+        typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(assets.coverPath !== undefined && { coverPath: assets.coverPath }),
         visibility: formString(form, 'tiktokVisibility') ?? 'everyone',
         ...(productId !== undefined && { productId }),
@@ -1466,6 +1492,7 @@ function buildCampaignInput(
       return {
         text,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(mediaPaths.length > 0 && { mediaPaths }),
         ...(communityName !== undefined && { communityName }),
         ...(communityId !== undefined && { communityId }),
@@ -1490,6 +1517,8 @@ function buildCampaignInput(
       return {
         pageUrl,
         text,
+        typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
         postAs,
         ...(facebookPageName !== undefined &&
@@ -1511,6 +1540,7 @@ function buildCampaignInput(
       return {
         text,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
         target,
         ...(companyPageUrl !== undefined && { companyPageUrl }),
@@ -1529,6 +1559,7 @@ function buildCampaignInput(
         videoPath: assets.videoPath,
         title,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(description !== undefined && { description }),
         ...(assets.thumbnailPath !== undefined && { thumbnailPath: assets.thumbnailPath }),
         ...(tags.length > 0 && { tags }),
@@ -1543,6 +1574,7 @@ function buildCampaignInput(
       return {
         imagePath: assets.imagePath,
         typingSpeedMultiplier: typingSpeed,
+        wordPauseMaxMs: wordPause,
         ...(text !== undefined && { caption: text }),
       };
     }

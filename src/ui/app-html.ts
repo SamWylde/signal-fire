@@ -629,6 +629,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
             <span class="rule"></span>
             <span>Typing <span id="typingSpeedSummary" style="font-family:var(--mono)">200%</span></span>
             <span class="rule"></span>
+            <span>Word pause <span id="wordPauseSummary" style="font-family:var(--mono)">40ms</span></span>
+            <span class="rule"></span>
             <span>Browser <span id="browserSummary" style="font-family:var(--mono)">saved session</span></span>
             <span class="rule"></span>
             <span>Checkpoints <span style="font-family:var(--mono)">manual handoff</span></span>
@@ -1036,25 +1038,30 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div class="two">
                   <label>Delay min seconds
                     <input name="campaignDelayMinSeconds" data-save="campaignDelayMinSeconds" inputmode="numeric" form="campaignForm">
+                    <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Shortest random wait before posting to the next platform in a campaign.</small>
                   </label>
                   <label>Delay max seconds
                     <input name="campaignDelayMaxSeconds" data-save="campaignDelayMaxSeconds" inputmode="numeric" form="campaignForm">
+                    <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Longest random wait before posting to the next platform in a campaign.</small>
                   </label>
                 </div>
                 <div class="two">
                   <label>Post cap / hour
                     <input name="postLimitPerHour" data-save="postLimitPerHour" inputmode="numeric" form="campaignForm">
+                    <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Max successful posts per account in any rolling 1-hour window.</small>
                   </label>
                   <label>Post cap / day
                     <input name="postLimitPerDay" data-save="postLimitPerDay" inputmode="numeric" form="campaignForm">
+                    <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Max successful posts per account in any rolling 24-hour window.</small>
                   </label>
                 </div>
+                <div><div class="eyebrow" style="font-size:10px;margin-bottom:2px">TikTok interactions</div><small style="display:block;color:#7a6a55;font-size:11px;line-height:1.35;margin-bottom:6px">Toggle what viewers can do with your TikTok video.</small></div>
                 <div class="three">
                   <label class="check-row"><input type="checkbox" name="allowComments" data-save="allowComments" form="campaignForm" checked> Comments</label>
                   <label class="check-row"><input type="checkbox" name="allowDuet" data-save="allowDuet" form="campaignForm" checked> Duet</label>
                   <label class="check-row"><input type="checkbox" name="allowStitch" data-save="allowStitch" form="campaignForm" checked> Stitch</label>
                 </div>
-                <label class="check-row"><input type="checkbox" name="madeForKids" data-save="madeForKids" form="campaignForm"> Made for kids</label>
+                <label class="check-row"><input type="checkbox" name="madeForKids" data-save="madeForKids" form="campaignForm"> Made for kids <small style="display:block;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35;margin-top:2px">YouTube COPPA setting — leave OFF unless content is directed at children. When ON, YouTube disables comments, personalized ads, and end screens.</small></label>
               </div>
             </div>
             <div class="card">
@@ -1064,7 +1071,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <input name="slowMoMs" data-save="slowMoMs" inputmode="numeric" form="campaignForm">
                 </label>
                 <label>Typing speed <span id="typingSpeedValue" class="meta-line">200%</span>
-                  <input type="range" name="typingSpeedPercent" data-save="typingSpeedPercent" min="50" max="500" step="25" value="200" form="campaignForm">
+                  <input type="range" name="typingSpeedPercent" data-save="typingSpeedPercent" min="50" max="1000" step="25" value="200" form="campaignForm">
+                </label>
+                <label>Word pause <span id="wordPauseValue" class="meta-line">40ms</span>
+                  <input type="range" name="wordPauseMaxMs" data-save="wordPauseMaxMs" min="0" max="200" step="5" value="40" form="campaignForm">
                 </label>
                 <input type="hidden" name="spoofFingerprint" value="false" form="campaignForm">
                 <label class="check-row"><input type="checkbox" id="spoofFingerprint" name="spoofFingerprint" value="true" data-save="spoofFingerprint" form="campaignForm"> Spoof browser fingerprint (stealth mode)</label>
@@ -1501,6 +1511,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var value = input && input.value ? input.value : '200';
       document.getElementById('typingSpeedValue').textContent = value + '%';
       document.getElementById('typingSpeedSummary').textContent = value + '%';
+      var pauseInput = document.querySelector('[name="wordPauseMaxMs"]');
+      var pauseValue = pauseInput && pauseInput.value ? pauseInput.value : '40';
+      document.getElementById('wordPauseValue').textContent = pauseValue + 'ms';
+      document.getElementById('wordPauseSummary').textContent = pauseValue + 'ms';
     }
 
     function updatePreview() {

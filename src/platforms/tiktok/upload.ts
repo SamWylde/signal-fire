@@ -1,7 +1,7 @@
 import type { Dialog } from 'patchright';
 
 import { type Page, isLocatorVisible } from '../../core/browser.js';
-import { selectAllShortcut, sleep } from '../../core/humanize.js';
+import { humanType, selectAllShortcut, sleep } from '../../core/humanize.js';
 import { humanClick } from '../../core/mouse.js';
 import { TIKTOK } from './selectors.js';
 
@@ -25,6 +25,8 @@ export interface UploadInput {
   allowDuet?: boolean;
   allowStitch?: boolean;
   skipSplitWindow?: boolean;
+  typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,8 +237,18 @@ async function setInteractivity(
   }
 }
 
-async function setDescription(page: Page, rawDescription: string): Promise<void> {
+async function setDescription(
+  page: Page,
+  rawDescription: string,
+  typingSpeedMultiplier?: number,
+  wordPauseMaxMs?: number,
+): Promise<void> {
   const description = rawDescription.slice(0, TIKTOK.limits.maxDescriptionLength);
+  const humanTypeOpts = {
+    naturalCadence: true as const,
+    ...(typingSpeedMultiplier !== undefined && { typingSpeedMultiplier }),
+    ...(wordPauseMaxMs !== undefined && { wordPauseMaxMs }),
+  };
 
   const descLoc = page.locator(xp(TIKTOK.selectors.upload.description));
   await descLoc.waitFor({ state: 'visible', timeout: TIKTOK.timeouts.implicitWaitMs });
@@ -254,7 +266,7 @@ async function setDescription(page: Page, rawDescription: string): Promise<void>
     }
 
     if (word[0] === '#') {
-      await descLoc.pressSequentially(word, { delay: 50 });
+      await humanType(descLoc, word, humanTypeOpts);
       await sleep(500);
       const mentionBox = page.locator(xp(TIKTOK.selectors.upload.mentionBox));
       try {
@@ -264,7 +276,7 @@ async function setDescription(page: Page, rawDescription: string): Promise<void>
         // no popup — continue
       }
     } else if (word[0] === '@') {
-      await descLoc.pressSequentially(word);
+      await humanType(descLoc, word, humanTypeOpts);
       await sleep(1000);
       const mentionBoxUserId = page.locator(xp(TIKTOK.selectors.upload.mentionBoxUserId));
       try {
@@ -285,12 +297,12 @@ async function setDescription(page: Page, rawDescription: string): Promise<void>
             }
           }
         }
-        if (!found) await descLoc.pressSequentially(' ');
+        if (!found) await humanType(descLoc, ' ', humanTypeOpts);
       } catch {
-        await descLoc.pressSequentially(' ');
+        await humanType(descLoc, ' ', humanTypeOpts);
       }
     } else {
-      await descLoc.pressSequentially(`${word} `);
+      await humanType(descLoc, `${word} `, humanTypeOpts);
     }
   }
 }
@@ -551,6 +563,8 @@ export async function completeUploadForm(page: Page, input: UploadInput): Promis
     allowDuet = true,
     allowStitch = true,
     skipSplitWindow = false,
+    typingSpeedMultiplier,
+    wordPauseMaxMs,
   } = input;
 
   await goToUpload(page);
@@ -563,7 +577,7 @@ export async function completeUploadForm(page: Page, input: UploadInput): Promis
     input.allowDuet !== undefined ||
     input.allowStitch !== undefined;
   await setInteractivity(page, { allowComments, allowDuet, allowStitch }, interactivityRequired);
-  await setDescription(page, description);
+  await setDescription(page, description, typingSpeedMultiplier, wordPauseMaxMs);
   if (visibility !== 'everyone') await setVisibility(page, visibility);
   if (schedule !== undefined) {
     const normalizedAt = normalizeSchedule(schedule.at);

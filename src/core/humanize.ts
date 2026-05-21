@@ -81,6 +81,8 @@ export interface HumanTypeOptions {
    * Higher values type faster. 1 is the current default cadence, 2 is twice as fast.
    */
   typingSpeedMultiplier?: number;
+  /** Maximum inter-word pause in ms at 1× multiplier. Defaults to 40. */
+  wordPauseMaxMs?: number;
   rng?: () => number;
 }
 
@@ -106,16 +108,32 @@ function defaultRange(min: number, max: number): [number, number] {
 
 function normalizeTypingSpeedMultiplier(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return 1;
-  return Math.min(5, Math.max(0.25, value));
+  return Math.min(10, Math.max(0.25, value));
 }
 
 function scaleRangeForSpeed(range: [number, number], speedMultiplier: number): [number, number] {
-  return [Math.max(1, range[0] / speedMultiplier), Math.max(1, range[1] / speedMultiplier)];
+  return [Math.max(0.5, range[0] / speedMultiplier), Math.max(0.5, range[1] / speedMultiplier)];
 }
 
-function biasedLowFromRange(min: number, max: number, rng: () => number): number {
+function biasedLow(min: number, max: number, rng: () => number): number {
   const sample = rng();
   return min + (max - min) * sample * sample;
+}
+
+function naturalKeyDelay(
+  min: number,
+  max: number,
+  rng: () => number,
+  speedMultiplier: number,
+): number {
+  const r = rng();
+  if (r < 0.03) {
+    return biasedLow(min, max, rng) + randomFromRange(80, 200, rng) / speedMultiplier;
+  }
+  if (r < 0.15) {
+    return randomFromRange(min, max * 2, rng);
+  }
+  return biasedLow(min, max, rng);
 }
 
 function isWhitespace(ch: string): boolean {
@@ -142,7 +160,7 @@ export function buildNaturalTypingPlan(
   text: string,
   options?: Pick<
     HumanTypeOptions,
-    'delayRange' | 'thinkProbability' | 'thinkRange' | 'typingSpeedMultiplier' | 'rng'
+    'delayRange' | 'thinkProbability' | 'thinkRange' | 'typingSpeedMultiplier' | 'wordPauseMaxMs' | 'rng'
   >,
 ): HumanTypingStep[] {
   const rng = options?.rng ?? Math.random;
@@ -158,6 +176,11 @@ export function buildNaturalTypingPlan(
   );
   const scaledDefaultRange = (min: number, max: number): [number, number] =>
     scaleRangeForSpeed(defaultRange(min, max), speedMultiplier);
+  const wordPauseMaxMs = options?.wordPauseMaxMs ?? 40;
+  const wordPauseRange: [number, number] = scaleRangeForSpeed(
+    [wordPauseMaxMs * 0.3, wordPauseMaxMs],
+    speedMultiplier,
+  );
   const steps: HumanTypingStep[] = [];
   const chars = [...text];
   let wordsUntilThink = 2 + Math.floor(rng() * 3);
@@ -190,7 +213,7 @@ export function buildNaturalTypingPlan(
         text: value,
         keyDelayMs: 0,
         keyDelayMsByChar: [...value].map(() => 0),
-        delayAfterMs: randomFromRange(...scaledDefaultRange(100, 300), rng),
+        delayAfterMs: randomFromRange(wordPauseRange[0], wordPauseRange[1], rng),
         kind: 'space',
       });
       continue;
@@ -201,7 +224,7 @@ export function buildNaturalTypingPlan(
       if (isSentenceEnd(ch) && rng() < 0.3) {
         delayAfterMs += randomFromRange(...scaledDefaultRange(400, 900), rng);
       }
-      const keyDelayMs = biasedLowFromRange(Math.max(10, delayRange[0]), delayRange[1], rng);
+      const keyDelayMs = naturalKeyDelay(Math.max(10, delayRange[0]), delayRange[1], rng, speedMultiplier);
       steps.push({
         text: ch,
         keyDelayMs,
@@ -230,7 +253,7 @@ export function buildNaturalTypingPlan(
     }
 
     const keyDelayMsByChar = [...word].map(() =>
-      biasedLowFromRange(delayRange[0], delayRange[1], rng),
+      naturalKeyDelay(delayRange[0], delayRange[1], rng, speedMultiplier),
     );
 
     steps.push({

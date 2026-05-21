@@ -1,5 +1,5 @@
 import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
-import { jitterSleep } from '../../core/humanize.js';
+import { humanType, jitterSleep } from '../../core/humanize.js';
 import { humanClick } from '../../core/mouse.js';
 import { FACEBOOK, buildFacebookPageSwitchSelector } from './selectors.js';
 
@@ -24,6 +24,8 @@ export interface FacebookComposeInput {
   facebookPageName?: string;
   /** When true, skips the final publish click. */
   dryRun?: boolean;
+  typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
   onLog?: (message: string, detail?: string) => void;
 }
 
@@ -204,11 +206,13 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
     .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
   await jitterSleep(800, 0.5);
 
-  // --- Step 4: Focus the Lexical text editor and insert text ---
+  // --- Step 4: Focus the Lexical text editor and type text ---
   const textEditor = page.locator(FACEBOOK.selectors.composer.textEditor).first();
-  await humanClick(page, textEditor);
-  // insertText is preferred over humanType because FB can drop chars with per-keystroke input.
-  await page.keyboard.insertText(input.text);
+  await humanType(textEditor, input.text, {
+    naturalCadence: true,
+    ...(input.typingSpeedMultiplier !== undefined && { typingSpeedMultiplier: input.typingSpeedMultiplier }),
+    ...(input.wordPauseMaxMs !== undefined && { wordPauseMaxMs: input.wordPauseMaxMs }),
+  });
   await jitterSleep(500, 0.5);
 
   // --- Step 5: Image upload (if provided) ---
