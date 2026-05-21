@@ -53,6 +53,8 @@ export const LINKEDIN = {
       postButtonAria: "button[aria-label='Post']",
       // Image attach: triggers the file input
       imageButtonAria: "button[aria-label='Add a photo']",
+      // Click inside the "Select files to begin" intermediate modal; this opens the OS file picker.
+      uploadFromComputerButton: 'button[aria-label="Upload from computer"]',
       // The hidden input that accepts the file
       fileInput: "input[type='file']",
       // Image preview selector from withImage.js
