@@ -1,7 +1,7 @@
 import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
 import { humanType, jitterSleep } from '../../core/humanize.js';
 import { humanClick } from '../../core/mouse.js';
-import { FACEBOOK, buildFacebookPageSwitchSelector } from './selectors.js';
+import { FACEBOOK } from './selectors.js';
 
 export interface FacebookLocalizedLabels {
   createPost: string;
@@ -166,26 +166,6 @@ async function openFacebookComposer(page: Page, input: FacebookComposeInput): Pr
 
 // Drives the composer on an already-authenticated page. Throws on unrecoverable error.
 export async function createPost(page: Page, input: FacebookComposeInput): Promise<void> {
-  // --- Step 0: Switch to page identity (if requested) ---
-  if (
-    input.postAs === 'page' &&
-    input.facebookPageName !== undefined &&
-    input.facebookPageName.trim().length > 0
-  ) {
-    await page.goto(FACEBOOK.urls.home, { waitUntil: 'domcontentloaded' });
-    await jitterSleep(800, 0.4);
-
-    await humanClick(page, page.locator(FACEBOOK.selectors.profileSwitcher.triggerButton).first());
-    await page
-      .locator(FACEBOOK.selectors.profileSwitcher.quickSwitchList)
-      .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
-
-    const switchSelector = buildFacebookPageSwitchSelector(input.facebookPageName.trim());
-    await humanClick(page, page.locator(switchSelector).first());
-    await page.waitForLoadState('networkidle').catch(() => undefined);
-    await jitterSleep(1000, 0.4);
-  }
-
   // --- Step 1: Navigate ---
   await page.goto(input.pageUrl, { waitUntil: 'domcontentloaded' });
   await jitterSleep(1500, 0.6);
