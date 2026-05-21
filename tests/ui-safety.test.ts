@@ -261,11 +261,16 @@ describe('manual campaign verification', () => {
 
   it('forces dryRun on manual campaign inputs for the verified platforms', () => {
     const form = campaignForm(['x']);
+    form.set('typingSpeedPercent', '300');
     const assets = { imagePath: 'C:\\tmp\\image.jpg' };
 
     for (const platform of ['x', 'facebook', 'linkedin', 'instagram'] as const) {
-      const input = buildManualCampaignInput(platform, form, assets) as { dryRun?: boolean };
+      const input = buildManualCampaignInput(platform, form, assets) as {
+        dryRun?: boolean;
+        typingSpeedMultiplier?: number;
+      };
       expect(input.dryRun).toBe(true);
+      if (platform !== 'facebook') expect(input.typingSpeedMultiplier).toBe(3);
     }
   });
 
@@ -544,6 +549,9 @@ describe('manual campaign verification', () => {
     expect(REDESIGNED_APP_HTML).toContain('window.confirm');
     expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
     expect(REDESIGNED_APP_HTML).toContain('data-linkedin-company-id-row');
+    expect(REDESIGNED_APP_HTML).toContain("selectedDetailPlatform === 'facebook'");
+    expect(REDESIGNED_APP_HTML).toContain('name="typingSpeedPercent"');
+    expect(REDESIGNED_APP_HTML).toContain('id="typingSpeedSummary"');
     expect(REDESIGNED_APP_HTML).toContain('draftFiles');
     expect(REDESIGNED_APP_HTML).toContain('draftUploadRequests');
     expect(REDESIGNED_APP_HTML).toContain('/api/draft-file');

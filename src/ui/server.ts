@@ -312,7 +312,10 @@ function findLoginFlowId(platform: PostingPlatform, accountId: string): string |
 let processingDueQueue = false;
 const DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS = 120;
 const DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS = 300;
+const DEFAULT_TYPING_SPEED_PERCENT = 200;
 const MAX_CAMPAIGN_DELAY_SECONDS = 3600;
+const MIN_TYPING_SPEED_PERCENT = 50;
+const MAX_TYPING_SPEED_PERCENT = 500;
 const DEFAULT_POST_LIMIT_PER_HOUR = 4;
 const DEFAULT_POST_LIMIT_PER_DAY = 20;
 const MAX_POST_LIMIT = 1000;
@@ -617,6 +620,7 @@ function defaultUiState(): UiState {
       postLimitPerHour: String(DEFAULT_POST_LIMIT_PER_HOUR),
       postLimitPerDay: String(DEFAULT_POST_LIMIT_PER_DAY),
       slowMoMs: '50',
+      typingSpeedPercent: String(DEFAULT_TYPING_SPEED_PERCENT),
       pageUrl: '',
       linkedinTarget: 'profile',
       linkedinPostType: 'post',
@@ -1098,6 +1102,7 @@ async function buildPostInput(
   form: FormData,
   runImmediate?: boolean,
 ): Promise<unknown> {
+  const typingSpeed = typingSpeedMultiplier(form);
   switch (platform) {
     case 'tiktok': {
       const videoPath = await requireFile(form, 'video', platform);
@@ -1128,6 +1133,7 @@ async function buildPostInput(
       const communityId = formString(form, 'communityId');
       return {
         text,
+        typingSpeedMultiplier: typingSpeed,
         ...(mediaPaths.length > 0 && { mediaPaths }),
         ...(communityName !== undefined && { communityName }),
         ...(communityId !== undefined && { communityId }),
@@ -1174,6 +1180,7 @@ async function buildPostInput(
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
       return {
         text,
+        typingSpeedMultiplier: typingSpeed,
         ...(imagePath !== undefined && { imagePath }),
         target,
         ...(companyPageUrl !== undefined && { companyPageUrl }),
@@ -1203,6 +1210,7 @@ async function buildPostInput(
       return {
         videoPath,
         title,
+        typingSpeedMultiplier: typingSpeed,
         ...(thumbnailPath !== undefined && { thumbnailPath }),
         ...(description !== undefined && { description }),
         ...(tags.length > 0 && { tags }),
@@ -1217,6 +1225,7 @@ async function buildPostInput(
       const caption = formString(form, 'caption');
       return {
         imagePath,
+        typingSpeedMultiplier: typingSpeed,
         ...(caption !== undefined && { caption }),
       };
     }
@@ -1345,6 +1354,17 @@ function parseOptionalInt(
   return parsed;
 }
 
+function typingSpeedMultiplier(form: FormData): number {
+  const percent =
+    parseOptionalInt(
+      formString(form, 'typingSpeedPercent'),
+      'Typing speed',
+      MIN_TYPING_SPEED_PERCENT,
+      MAX_TYPING_SPEED_PERCENT,
+    ) ?? DEFAULT_TYPING_SPEED_PERCENT;
+  return percent / 100;
+}
+
 function buildRateLimits(form: FormData): ActionLimits | undefined {
   const perHour = parseOptionalInt(
     formString(form, 'postLimitPerHour'),
@@ -1417,6 +1437,7 @@ function buildCampaignInput(
   const title = formString(form, 'title') ?? text?.slice(0, 100);
   const description = formString(form, 'description') ?? text;
   const schedule = runImmediate === true ? undefined : parseSchedule(formString(form, 'schedule'));
+  const typingSpeed = typingSpeedMultiplier(form);
 
   switch (platform) {
     case 'tiktok': {
@@ -1444,6 +1465,7 @@ function buildCampaignInput(
       const communityId = formString(form, 'communityId');
       return {
         text,
+        typingSpeedMultiplier: typingSpeed,
         ...(mediaPaths.length > 0 && { mediaPaths }),
         ...(communityName !== undefined && { communityName }),
         ...(communityId !== undefined && { communityId }),
@@ -1488,6 +1510,7 @@ function buildCampaignInput(
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
       return {
         text,
+        typingSpeedMultiplier: typingSpeed,
         ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
         target,
         ...(companyPageUrl !== undefined && { companyPageUrl }),
@@ -1505,6 +1528,7 @@ function buildCampaignInput(
       return {
         videoPath: assets.videoPath,
         title,
+        typingSpeedMultiplier: typingSpeed,
         ...(description !== undefined && { description }),
         ...(assets.thumbnailPath !== undefined && { thumbnailPath: assets.thumbnailPath }),
         ...(tags.length > 0 && { tags }),
@@ -1518,6 +1542,7 @@ function buildCampaignInput(
       if (assets.imagePath === undefined) throw new Error('Image is required for Instagram');
       return {
         imagePath: assets.imagePath,
+        typingSpeedMultiplier: typingSpeed,
         ...(text !== undefined && { caption: text }),
       };
     }
