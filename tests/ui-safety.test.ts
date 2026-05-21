@@ -521,6 +521,15 @@ describe('manual campaign verification', () => {
     await expect(saveUploadedFile(fakeFile, 'draft-video')).rejects.toThrow(/200 MB/);
   });
 
+  it('preserves uploaded file extensions from MIME type when browser file names are generic', async () => {
+    const filePath = await saveUploadedFile(
+      new File(['fresh'], 'blob', { type: 'image/png' }),
+      'draft-image',
+    );
+
+    expect(filePath).toMatch(/blob\.png$/);
+  });
+
   it('exposes manual UI controls and guards live posting', () => {
     expect(REDESIGNED_APP_HTML).toContain('id="manualVerifyTop"');
     expect(REDESIGNED_APP_HTML).toContain('/api/campaign/manual');

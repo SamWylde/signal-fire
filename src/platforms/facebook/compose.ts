@@ -31,6 +31,22 @@ function logFacebook(input: FacebookComposeInput, message: string, detail?: stri
   input.onLog?.(message, detail);
 }
 
+export function isManagementUrl(value: string): boolean {
+  try {
+    const url = new URL(value, 'https://www.facebook.com');
+    const path = url.pathname.toLowerCase();
+    return (
+      (path === '/profile.php' && /^\d+$/.test(url.searchParams.get('id') ?? '')) ||
+      /\/(admin|dashboard)(\/|$)/i.test(path)
+    );
+  } catch {
+    return (
+      /facebook\.com\/profile\.php\?[^#]*\bid=\d+/i.test(value) ||
+      /facebook\.com\/.*\/(admin|dashboard)(\/|$)/i.test(value)
+    );
+  }
+}
+
 async function clickFirstVisible(
   page: Page,
   locators: Locator[],
@@ -79,6 +95,26 @@ function facebookComposerTriggers(page: Page): Locator[] {
   ];
 }
 
+async function hasManagementSurface(page: Page): Promise<boolean> {
+  const locators = [
+    page.getByText('Manage Page', { exact: true }),
+    page.getByText('Professional dashboard', { exact: false }),
+    page.getByRole('button', { name: /^Switch Now$/i }),
+    page.locator("div[role='button']:has-text('Switch Now')"),
+  ];
+  for (const locator of locators) {
+    if (await isLocatorVisible(locator.first(), 500).catch(() => false)) return true;
+  }
+  return false;
+}
+
+async function managementFailureHint(page: Page, input: FacebookComposeInput): Promise<string> {
+  const managementUrl = isManagementUrl(input.pageUrl) || isManagementUrl(page.url());
+  const managementSurface = await hasManagementSurface(page).catch(() => false);
+  if (!managementUrl && !managementSurface) return '';
+  return ' (management page detected - consider using the public page feed URL instead)';
+}
+
 async function switchIntoPageIfPromptVisible(
   page: Page,
   input: FacebookComposeInput,
@@ -121,7 +157,9 @@ async function openFacebookComposer(page: Page, input: FacebookComposeInput): Pr
     if (secondAttempt) return;
   }
 
-  throw new Error(`Facebook no composer trigger found at ${page.url()}`);
+  throw new Error(
+    `Facebook no composer trigger found at ${page.url()}${await managementFailureHint(page, input)}`,
+  );
 }
 
 // Drives the composer on an already-authenticated page. Throws on unrecoverable error.
@@ -149,6 +187,11 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
   // --- Step 1: Navigate ---
   await page.goto(input.pageUrl, { waitUntil: 'domcontentloaded' });
   await jitterSleep(1500, 0.6);
+  logFacebook(
+    input,
+    'Facebook page opened',
+    `${page.url()}${isManagementUrl(input.pageUrl) || isManagementUrl(page.url()) ? ' (management URL)' : ''}`,
+  );
   await switchIntoPageIfPromptVisible(page, input);
 
   // --- Step 2: Click a visible composer trigger to open the modal ---

@@ -1,4 +1,5 @@
 import { type LaunchOptions, launchBrowser } from '../../core/browser.js';
+import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
@@ -57,11 +58,16 @@ export async function post(input: XComposeInput, options: XPostOptions): Promise
       tweetUrl = tweet.tweetUrl;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const debugArtifacts = await captureFailureArtifacts('x', page).catch(() => undefined);
       await recordAction('x', accountId, 'post', {
         ok: false,
         meta: { hasMedia: !!input.mediaPaths?.length },
       });
-      return { ok: false, error: msg };
+      return {
+        ok: false,
+        error: msg,
+        ...(debugArtifacts !== undefined && { debugArtifacts }),
+      };
     }
 
     // 6. Mark persistent session as validated

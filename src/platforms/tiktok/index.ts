@@ -1,4 +1,5 @@
 import { type LaunchOptions, launchBrowser } from '../../core/browser.js';
+import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
@@ -71,11 +72,16 @@ export async function post(input: UploadInput, options: TikTokPostOptions): Prom
       await completeUploadForm(page, input);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const debugArtifacts = await captureFailureArtifacts('tiktok', page).catch(() => undefined);
       await recordAction('tiktok', accountId, 'post', {
         ok: false,
         meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
       });
-      return { ok: false, error: msg };
+      return {
+        ok: false,
+        error: msg,
+        ...(debugArtifacts !== undefined && { debugArtifacts }),
+      };
     }
 
     // 7. Mark persistent session as validated
