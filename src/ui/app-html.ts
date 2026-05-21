@@ -733,10 +733,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <label data-platform-detail="facebook" data-facebook-page-only>Facebook Page Name
                     <input type="text" name="facebookPageName" data-save="facebookPageName" placeholder="e.g. GrantCue">
                   </label>
-                  <label class="check-row" data-platform-detail="facebook"><input type="checkbox" name="facebookDryRun" data-save="facebookDryRun"> Dry run (test without posting)</label>
-                  <label class="check-row" data-platform-detail="instagram">
-                    <input type="checkbox" name="instagramDryRun" data-save="instagramDryRun"> Dry run (test without posting)
-                  </label>
                   <div class="two" data-platform-detail="linkedin">
                     <label>LinkedIn Target
                       <select name="linkedinTarget" data-save="linkedinTarget">
@@ -748,8 +744,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                       <input name="linkedinCompanyPageUrl" data-save="linkedinCompanyPageUrl">
                     </label>
                   </div>
-                  <label data-platform-detail="linkedin">LinkedIn Company ID
-                    <input type="text" name="linkedinCompanyId" data-save="linkedinCompanyId" placeholder="e.g. 110105724">
+                  <label data-platform-detail="linkedin" data-linkedin-company-id-row>LinkedIn Company ID <span id="linkedinCompanyIdOptional">(optional)</span>
+                    <input type="text" name="linkedinCompanyId" data-save="linkedinCompanyId" placeholder="Optional fallback; auto-detected from URL when possible">
+                    <span id="linkedinCompanyIdHint" style="display:block;color:var(--ink-3);font-size:11px;margin-top:4px"></span>
                   </label>
                   <label data-platform-detail="linkedin">Post Type
                     <select name="linkedinPostType" data-save="linkedinPostType">
@@ -763,7 +760,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <label data-platform-detail="linkedin" data-linkedin-article-only>Share Intro
                     <input type="text" name="linkedinShareIntro" data-save="linkedinShareIntro" placeholder="Intro text for share modal (optional)">
                   </label>
-                  <label class="check-row" data-platform-detail="linkedin"><input type="checkbox" name="linkedinDryRun" data-save="linkedinDryRun"> Dry run (test without publishing)</label>
                   <div class="two" data-platform-detail="x">
                     <label>X Community
                       <input name="communityName" data-save="communityName">
@@ -772,7 +768,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                       <input name="communityId" data-save="communityId">
                     </label>
                   </div>
-                  <label class="check-row" data-platform-detail="x"><input type="checkbox" name="xDryRun" data-save="xDryRun"> Dry run (test without posting)</label>
                   <div class="two" data-platform-detail="tiktok">
                     <label>TikTok Visibility
                       <select name="tiktokVisibility" data-save="tiktokVisibility">
@@ -1113,6 +1108,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var historyEntries = [];
     var runLogEntries = [];
     var runLogTimer = null;
+    var draftFiles = {};
     var activeView = 'compose';
     var accountEl = document.getElementById('account');
     var accountMirrorEl = document.getElementById('accountMirror');
@@ -1381,6 +1377,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         activePlatform: currentPlatform(),
         targets: selectedTargets(),
         fields: fields,
+        draftFiles: draftFiles,
         overrideText: overrideText,
         overrideEnabled: overrideEnabled
       };
@@ -1417,6 +1414,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       }
       if (state.overrideText && typeof state.overrideText === 'object') overrideText = state.overrideText;
       if (state.overrideEnabled && typeof state.overrideEnabled === 'object') overrideEnabled = state.overrideEnabled;
+      if (state.draftFiles && typeof state.draftFiles === 'object') draftFiles = state.draftFiles;
       updateOvrBadges();
       if (state.fields) {
         if ('useBrowserProfile' in state.fields) useProfileEl.checked = true; // legacy state may have false; checkbox is disabled and feature is always-on
@@ -1427,6 +1425,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           else input.value = state.fields[key] || '';
         });
       }
+      document.querySelectorAll('[data-file-label]').forEach(function(input) {
+        updateFileLabel(input);
+      });
       updateAll();
     }
 
@@ -1503,6 +1504,48 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       });
     }
 
+    function linkedinCompanySlugFromUrl(value) {
+      var raw = String(value || '').trim();
+      if (!raw) return '';
+      var path = raw;
+      try {
+        path = new URL(raw).pathname;
+      } catch (err) {
+        var marker = 'linkedin.com/company/';
+        var lower = raw.toLowerCase();
+        var markerIndex = lower.indexOf(marker);
+        if (markerIndex === -1) return '';
+        path = '/company/' + raw.slice(markerIndex + marker.length);
+      }
+      var parts = path.split('/').filter(Boolean);
+      var companyIndex = parts
+        .map(function(part) { return part.toLowerCase(); })
+        .indexOf('company');
+      return companyIndex !== -1 && parts[companyIndex + 1]
+        ? decodeURIComponent(parts[companyIndex + 1])
+        : '';
+    }
+
+    function updateLinkedInCompanyIdField() {
+      var targetEl = document.querySelector('[name="linkedinTarget"]');
+      var postTypeEl = document.querySelector('[name="linkedinPostType"]');
+      var urlEl = document.querySelector('[name="linkedinCompanyPageUrl"]');
+      var row = document.querySelector('[data-linkedin-company-id-row]');
+      var hint = document.getElementById('linkedinCompanyIdHint');
+      var optional = document.getElementById('linkedinCompanyIdOptional');
+      if (!targetEl || !postTypeEl || !urlEl || !row || !hint || !optional) return;
+
+      var slug = linkedinCompanySlugFromUrl(urlEl.value.trim());
+      var hasUrlCompany = slug.length > 0;
+      var numeric = /^\\d+$/.test(slug);
+      var needsArticleId = targetEl.value === 'company' && postTypeEl.value === 'article' && !numeric;
+      row.hidden = targetEl.value !== 'company' || (hasUrlCompany && !needsArticleId);
+      optional.textContent = needsArticleId ? '(required for article if URL uses a slug)' : '(optional fallback)';
+      hint.textContent = hasUrlCompany
+        ? 'Detected from URL: ' + slug
+        : 'Use this only if the company URL is unavailable.';
+    }
+
     function updateFacebookPageFields() {
       var postAsEl = document.querySelector('[name="facebookPostAs"]');
       var isPage = postAsEl && postAsEl.value === 'page';
@@ -1527,6 +1570,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       if (labelEl) labelEl.textContent = platformNames[selected] || selected;
       updateOverrideSection(selected);
       updateLinkedInArticleFields();
+      updateLinkedInCompanyIdField();
       updateFacebookPageFields();
     }
 
@@ -1534,7 +1578,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var id = input.dataset.fileLabel;
       if (!id) return;
       var label = document.getElementById(id);
-      label.textContent = input.files && input.files.length ? input.files[0].name : 'No file selected';
+      var draft = draftFiles[input.name];
+      label.textContent = input.files && input.files.length
+        ? input.files[0].name
+        : draft && draft.name
+          ? draft.name + ' (saved)'
+          : 'No file selected';
       if (input.name === 'image' && input.files && input.files[0]) {
         var url = URL.createObjectURL(input.files[0]);
         ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
@@ -1543,7 +1592,30 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           box.innerHTML = '<img alt="">';
           box.querySelector('img').src = url;
         });
+      } else if (input.name === 'image' && draft && draft.path) {
+        ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
+          var box = document.getElementById(previewId);
+          box.textContent = '';
+          box.innerHTML = '<img alt="">';
+          box.querySelector('img').src = '/api/draft-file?path=' + encodeURIComponent(draft.path);
+        });
       }
+    }
+
+    async function persistDraftFile(input) {
+      if (!input.files || !input.files[0]) {
+        delete draftFiles[input.name];
+        updateFileLabel(input);
+        saveStateSoon();
+        return;
+      }
+      var form = new FormData();
+      form.set('kind', input.name);
+      form.set('file', input.files[0]);
+      var data = await api('/api/draft-file', { method: 'POST', body: form });
+      draftFiles[input.name] = data.file;
+      updateFileLabel(input);
+      saveStateSoon();
     }
 
     function updateOvrBadges() {
@@ -1956,6 +2028,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var form = new FormData(formEl);
       form.set('account', currentAccount());
       if (useProfileEl.checked) form.set('useBrowserProfile', 'on');
+      Object.keys(draftFiles).forEach(function(key) {
+        var file = draftFiles[key];
+        if (!file || !file.path) return;
+        var fieldName = 'saved' + key.charAt(0).toUpperCase() + key.slice(1) + 'Path';
+        form.set(fieldName, file.path);
+      });
       appendOverrideFields(form);
       return form;
     }
@@ -1972,7 +2050,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     function fileSelected(name) {
       var input = document.querySelector('[name="' + name + '"]');
-      return Boolean(input && input.value);
+      return Boolean((input && input.value) || (draftFiles[name] && draftFiles[name].path));
     }
 
     function checkComposeForm() {
@@ -2095,10 +2173,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       setBottom('Saving scheduled post...', '');
       var button = document.getElementById('saveQueue');
       button.disabled = true;
-      var form = new FormData(formEl);
-      form.set('account', currentAccount());
-      if (useProfileEl.checked) form.set('useBrowserProfile', 'on');
-      appendOverrideFields(form);
+      var form = buildCampaignForm();
       try {
         await saveStateNow();
         await api('/api/queue', { method: 'POST', body: form });
@@ -2493,7 +2568,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       saveStateSoon();
     });
     document.querySelectorAll('[data-file-label]').forEach(function(input) {
-      input.addEventListener('change', function() { updateFileLabel(input); });
+      input.addEventListener('change', function() {
+        updateFileLabel(input);
+        persistDraftFile(input).catch(function(err) {
+          setBottom('Could not save selected file for reopening: ' + err.message, 'bad');
+        });
+      });
     });
     document.addEventListener('input', function(event) {
       if (event.target.matches('[data-save], #textInput')) {
