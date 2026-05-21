@@ -93,6 +93,8 @@ export const LINKEDIN = {
     companyShare: {
       // URL template — replace {companyId} with the numeric or slug company ID
       url: '/company/{companyId}/admin/page-posts/published/?share=true',
+      // Media attach button in the company composer toolbar
+      addMediaButton: "button[aria-label='Add media']",
       // data-test attribute first (most stable), then aria-label, then structural, then class-based
       textEditor:
         '[data-test-ql-editor-contenteditable="true"], div[aria-label="Text editor for creating content"], div[contenteditable="true"][role="textbox"][aria-multiline="true"]',
