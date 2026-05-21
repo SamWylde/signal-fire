@@ -20,6 +20,7 @@ export interface YouTubeUploadInput {
   visibility?: Visibility;
   schedule?: YouTubeScheduleInput;
   typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
 }
 
 export interface YouTubeUploadResult {
@@ -102,9 +103,10 @@ async function fillMetadata(
   title: string,
   description: string | undefined,
   typingSpeedMultiplier: number | undefined,
+  wordPauseMaxMs: number | undefined,
 ): Promise<void> {
   const clampedTitle = title.slice(0, YOUTUBE.limits.maxTitleLength);
-  const typingOptions = youtubeTypingOptions(typingSpeedMultiplier);
+  const typingOptions = youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs);
   const titleBox = await metadataTextBox(page, YOUTUBE.selectors.metadata.titleAria, 0, 'title');
   await humanClick(page, titleBox);
   await page.keyboard.press(selectAllShortcut());
@@ -126,13 +128,18 @@ async function fillMetadata(
   }
 }
 
-function youtubeTypingOptions(typingSpeedMultiplier: number | undefined): {
+function youtubeTypingOptions(
+  typingSpeedMultiplier: number | undefined,
+  wordPauseMaxMs: number | undefined,
+): {
   naturalCadence: true;
   typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
 } {
   return {
     naturalCadence: true,
     ...(typingSpeedMultiplier !== undefined && { typingSpeedMultiplier }),
+    ...(wordPauseMaxMs !== undefined && { wordPauseMaxMs }),
   };
 }
 
@@ -160,6 +167,7 @@ async function fillTags(
   page: Page,
   tags: string[],
   typingSpeedMultiplier: number | undefined,
+  wordPauseMaxMs: number | undefined,
 ): Promise<void> {
   await humanClick(page, page.locator(YOUTUBE.selectors.metadata.showMore).first());
 
@@ -171,7 +179,7 @@ async function fillTags(
   await tagsInput.waitFor({ state: 'visible', timeout: YOUTUBE.timeouts.shortMs });
 
   const tagsString = tags.join(',').slice(0, YOUTUBE.limits.maxTags);
-  await humanType(tagsInput, tagsString, youtubeTypingOptions(typingSpeedMultiplier));
+  await humanType(tagsInput, tagsString, youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs));
 }
 
 async function setThumbnail(page: Page, thumbnailPath: string): Promise<void> {
@@ -229,6 +237,7 @@ async function setVisibilityOrSchedule(
   visibility: Visibility,
   schedule: YouTubeScheduleInput | undefined,
   typingSpeedMultiplier: number | undefined,
+  wordPauseMaxMs: number | undefined,
 ): Promise<void> {
   if (schedule !== undefined) {
     validateSchedule(schedule.at);
@@ -251,13 +260,13 @@ async function setVisibilityOrSchedule(
     const dateInput = page.locator(YOUTUBE.selectors.visibility.scheduleDateInput).first();
     await humanClick(page, dateInput);
     await dateInput.fill('');
-    await humanType(dateInput, dateStr, youtubeTypingOptions(typingSpeedMultiplier));
+    await humanType(dateInput, dateStr, youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs));
     await page.keyboard.press('Enter');
 
     const timeInput = page.locator(YOUTUBE.selectors.visibility.scheduleTimeInput).first();
     await humanClick(page, timeInput);
     await timeInput.fill('');
-    await humanType(timeInput, timeStr, youtubeTypingOptions(typingSpeedMultiplier));
+    await humanType(timeInput, timeStr, youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs));
     await page.keyboard.press('Enter');
   } else {
     const host = page.locator(YOUTUBE.selectors.visibility[visibility]).first();
@@ -407,7 +416,7 @@ export async function completeUpload(
   await setVideo(page, videoPath);
 
   // 3. Title + Description
-  await fillMetadata(page, title, description, input.typingSpeedMultiplier);
+  await fillMetadata(page, title, description, input.typingSpeedMultiplier, input.wordPauseMaxMs);
 
   // 3b. Custom thumbnail (source uploader supported this via input#file-loader)
   if (thumbnailPath !== undefined) {
@@ -416,7 +425,7 @@ export async function completeUpload(
 
   // 4. Tags (Show more must be clicked first)
   if (tags !== undefined && tags.length > 0) {
-    await fillTags(page, tags, input.typingSpeedMultiplier);
+    await fillTags(page, tags, input.typingSpeedMultiplier, input.wordPauseMaxMs);
   }
 
   // 5. Audience
@@ -434,7 +443,7 @@ export async function completeUpload(
   }
 
   // 8. Visibility / Schedule
-  await setVisibilityOrSchedule(page, visibility, schedule, input.typingSpeedMultiplier);
+  await setVisibilityOrSchedule(page, visibility, schedule, input.typingSpeedMultiplier, input.wordPauseMaxMs);
 
   // 9. Wait for upload readiness/errors before Done.
   await waitForDoneReadiness(page);
