@@ -8,6 +8,11 @@ export interface InstagramComposeInput {
   caption?: string; // clamped to INSTAGRAM.limits.maxCaptionLength internally
   /** When true, executes all steps but skips the final Share click. */
   dryRun?: boolean;
+  onLog?: (message: string, detail?: string) => void;
+}
+
+function logInstagram(input: InstagramComposeInput, message: string, detail?: string): void {
+  input.onLog?.(message, detail);
 }
 
 async function clickFirstUsable(
@@ -74,6 +79,24 @@ function actionButtonLocators(page: Page, label: 'Next' | 'Share'): Locator[] {
   ];
 }
 
+function postMenuLocators(page: Page): Locator[] {
+  return [
+    page.getByRole('menuitem', { name: /^Post$/i }),
+    page.getByRole('link', { name: /^Post$/i }),
+    page.getByRole('button', { name: /^Post$/i }),
+    page.locator(INSTAGRAM.selectors.composer.postMenuItem),
+    page.locator(INSTAGRAM.selectors.composer.postTypePost),
+  ];
+}
+
+async function clickPostMenuIfPresent(page: Page, input: InstagramComposeInput): Promise<void> {
+  const clicked = await clickFirstUsable(page, postMenuLocators(page), 2000).catch(() => false);
+  if (clicked) {
+    logInstagram(input, 'Instagram Post menu item selected');
+    await jitterSleep(800, 0.4);
+  }
+}
+
 // Drives the new-post wizard on an authenticated page. Throws on unrecoverable error or
 // if Instagram surfaces an Action Blocked screen.
 export async function createPost(page: Page, input: InstagramComposeInput): Promise<void> {
@@ -106,29 +129,35 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
   if (!triggerClicked) {
     throw new Error('Could not find New post trigger - selectors may be stale');
   }
+  logInstagram(input, 'Instagram create trigger clicked');
 
-  // --- Step 4: Wait for dialog modal ---
+  // --- Step 4: Choose Post from the intermediate Create menu if Instagram shows it ---
+  await clickPostMenuIfPresent(page, input);
+
+  // --- Step 5: Wait for dialog modal ---
   // Primary: verified createModal selector (2026-05-20); fallback to generic dialog
   await page
     .locator(INSTAGRAM.selectors.composer.createModal)
     .or(page.locator(INSTAGRAM.selectors.composer.dialog))
     .first()
     .waitFor({ state: 'visible', timeout: mediumMs });
+  logInstagram(input, 'Instagram create dialog opened');
   await jitterSleep(800, 0.4);
 
-  // --- Step 5: Detect Reel-vs-Post selection (if Instagram shows the choice) ---
+  // --- Step 6: Detect Reel-vs-Post selection (if Instagram shows the choice) ---
   // Some IG versions show this toggle; newer flows skip directly to the file picker.
   try {
     const postTypeLocator = page.locator(INSTAGRAM.selectors.composer.postTypePost).first();
     const postTypeVisible = await isLocatorVisible(postTypeLocator, shortMs);
     if (postTypeVisible) {
       await humanClick(page, postTypeLocator);
+      logInstagram(input, 'Instagram Post type selected');
     }
   } catch {
     // Toggle not present — continue
   }
 
-  // --- Step 6: Click "Select from computer" (if shown) ---
+  // --- Step 7: Click "Select from computer" (if shown) ---
   // Newer IG flows skip this and go straight to the hidden file input.
   try {
     const selectBtn = page.locator(INSTAGRAM.selectors.composer.selectFromComputerButton).first();
@@ -140,7 +169,7 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     // Button not present — continue
   }
 
-  // --- Step 7: Upload file ---
+  // --- Step 8: Upload file ---
   // Primary: verified Stage 1 file input scoped to the Create new post modal (2026-05-20)
   await setFirstAttachedFileInput(
     [
@@ -153,9 +182,10 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     input.imagePath,
     mediumMs,
   );
+  logInstagram(input, 'Instagram image file attached');
   await jitterSleep(2500, 0.5);
 
-  // --- Step 8: Advance through Crop / Filter / Adjust screens ---
+  // --- Step 9: Advance through Crop / Filter / Adjust screens ---
   // Wait for the Crop screen to appear after upload.
   await page
     .locator(INSTAGRAM.selectors.composer.cropScreenHeading)
@@ -176,7 +206,7 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     await page.waitForTimeout(800); // wait for screen transition
   }
 
-  // --- Step 9: Fill caption ---
+  // --- Step 10: Fill caption ---
   // Wait for the Share button to confirm we've reached the Caption screen.
   await page
     .locator(INSTAGRAM.selectors.composer.shareButton)
@@ -193,11 +223,13 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     // Caption is a Lexical contenteditable div — click to focus, then type.
     const captionLocator = page.locator(INSTAGRAM.selectors.composer.captionEditor).first();
     await humanClick(page, captionLocator);
-    await humanType(captionLocator, captionText);
+    logInstagram(input, 'Typing Instagram caption');
+    await humanType(captionLocator, captionText, { naturalCadence: true });
   }
 
-  // --- Step 10: Click Share (three-tier fallback) ---
+  // --- Step 11: Click Share (three-tier fallback) ---
   if (input.dryRun === true) {
+    logInstagram(input, 'Instagram post ready for manual submit');
     console.log('[instagram] dry-run: typed caption but did not click Share');
     return;
   }

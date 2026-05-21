@@ -1,5 +1,5 @@
 import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
-import { humanType, jitterSleep } from '../../core/humanize.js';
+import { humanType, jitterSleep, selectAllShortcut } from '../../core/humanize.js';
 import { humanClick } from '../../core/mouse.js';
 import { X } from './selectors.js';
 
@@ -13,6 +13,7 @@ export interface XComposeInput {
   communityName?: string;
   communityId?: string;
   dryRun?: boolean;
+  onLog?: (message: string, detail?: string) => void;
 }
 
 export interface XComposeResult {
@@ -21,6 +22,16 @@ export interface XComposeResult {
 
 // XPath prefix helper
 const xp = (s: string) => `xpath=${s}`;
+
+interface XOpenedComposer {
+  textAreaSelector: string;
+  postButtonSelector: string;
+  textAreaLocator: Locator;
+}
+
+function logX(input: XComposeInput, message: string, detail?: string): void {
+  input.onLog?.(message, detail);
+}
 
 // ---------------------------------------------------------------------------
 // filterMediaForX — pure, exported for tests
@@ -178,22 +189,92 @@ async function openSidebarComposer(page: Page): Promise<{
   };
 }
 
+function xTextEditorCandidates(page: Page): Locator[] {
+  return [
+    page.locator(X.selectors.composer.textEditor),
+    page.locator("[data-testid^='tweetTextarea_']"),
+    page.locator(`${X.selectors.composer.modal} [contenteditable='true'][role='textbox']`),
+    page.locator("[contenteditable='true'][role='textbox']"),
+    page.getByRole('textbox', { name: /^(Post text|Tweet text|What's happening\?)$/i }),
+  ];
+}
+
+async function resolveXTextEditor(page: Page, timeoutMs: number): Promise<Locator> {
+  let lastError: unknown = null;
+  for (const locator of xTextEditorCandidates(page)) {
+    const candidate = locator.first();
+    try {
+      await candidate.waitFor({ state: 'visible', timeout: timeoutMs });
+      return candidate;
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new Error(
+    `Could not find visible X composer text editor: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
+}
+
 async function openStandaloneComposer(page: Page): Promise<{
   textAreaSelector: string;
   postButtonSelector: string;
+  textAreaLocator: Locator;
 }> {
   await page.goto(X.urls.composePost, { waitUntil: 'domcontentloaded' });
-  await jitterSleep(2000, 0.5);
+  await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
+  await jitterSleep(1200, 0.5);
 
-  await page.locator(X.selectors.composer.textEditor).waitFor({
-    state: 'visible',
-    timeout: X.timeouts.mediumMs,
-  });
+  const textAreaLocator = await resolveXTextEditor(page, X.timeouts.mediumMs);
 
   return {
     textAreaSelector: X.selectors.composer.textEditor,
     postButtonSelector: X.selectors.composer.postButton,
+    textAreaLocator,
   };
+}
+
+async function openSidebarComposerWithEditor(page: Page): Promise<XOpenedComposer> {
+  const composer = await openSidebarComposer(page);
+  return {
+    ...composer,
+    textAreaLocator: await resolveXTextEditor(page, X.timeouts.mediumMs),
+  };
+}
+
+function expectedNormalizedText(text: string): string {
+  return text.trim().replace(/\s+/g, ' ');
+}
+
+async function textEditorValue(locator: Locator): Promise<string> {
+  const value = await locator
+    .evaluate((node) => (node.textContent ?? '').replace(/\s+/g, ' ').trim())
+    .catch(() => '');
+  return value;
+}
+
+async function typeAndVerifyXText(page: Page, locator: Locator, text: string): Promise<void> {
+  await humanType(locator, text, { clearFirst: true, naturalCadence: true });
+  await jitterSleep(700, 0.4);
+
+  const expected = expectedNormalizedText(text);
+  if (expected.length === 0) return;
+  const typedText = await textEditorValue(locator);
+  if (typedText.includes(expected)) return;
+
+  await locator.focus().catch(async () => {
+    await humanClick(page, locator);
+  });
+  await page.keyboard.press(selectAllShortcut());
+  await page.keyboard.press('Delete');
+  await page.keyboard.insertText(text);
+  await jitterSleep(400, 0.4);
+
+  const fallbackText = await textEditorValue(locator);
+  if (!fallbackText.includes(expected)) {
+    throw new Error('Could not verify X composer text after typing fallback');
+  }
 }
 
 async function detectPostedTweetUrl(page: Page, text: string): Promise<string | undefined> {
@@ -237,24 +318,40 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
       ? filterMediaForX(input.mediaPaths)
       : [];
 
-  let composer: { textAreaSelector: string; postButtonSelector: string };
+  let composer: XOpenedComposer;
 
   // --- Step 1: Navigate and open composer ---
   if (mode === 'sidebar') {
-    composer = await openSidebarComposer(page);
+    logX(input, 'Opening X sidebar composer');
+    composer = await openSidebarComposerWithEditor(page);
   } else {
-    composer = await openStandaloneComposer(page).catch(() => openSidebarComposer(page));
+    logX(input, 'Opening X standalone composer');
+    try {
+      composer = await openStandaloneComposer(page);
+    } catch (err) {
+      logX(
+        input,
+        'X standalone composer failed; falling back to sidebar',
+        err instanceof Error ? err.message : String(err),
+      );
+      composer = await openSidebarComposerWithEditor(page);
+    }
   }
+  logX(input, 'X composer editor found');
 
   // --- Step 2: Select audience/community before typing or uploading media ---
   const { textAreaSelector, postButtonSelector } = composer;
-  let textAreaLocator = page.locator(textAreaSelector).first();
+  let textAreaLocator = composer.textAreaLocator;
   await humanClick(page, textAreaLocator).catch(() => undefined);
   await selectCommunityIfConfigured(page, input);
 
   // Audience selection can rerender the composer; reacquire the textarea before typing.
-  textAreaLocator = page.locator(textAreaSelector).first();
-  await humanType(textAreaLocator, text, { clearFirst: true });
+  textAreaLocator = await resolveXTextEditor(page, X.timeouts.shortMs).catch(
+    () => composer.textAreaLocator,
+  );
+  logX(input, 'Typing X post text');
+  await typeAndVerifyXText(page, textAreaLocator, text);
+  logX(input, 'X post text verified');
   await jitterSleep(1200, 0.4);
 
   // --- Step 3: Attach media (if any) ---
@@ -288,6 +385,7 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
 
   // --- Step 5: Dry-run check ---
   if (input.dryRun === true) {
+    logX(input, 'X post ready for manual submit');
     console.log('[x] dry-run: would click "Post" to submit');
     return {};
   }

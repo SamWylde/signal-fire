@@ -308,6 +308,7 @@ const UI_PORT_SEARCH_ATTEMPTS = 128;
 const HISTORY_LIMIT = 250;
 const RUN_LOG_LIMIT = 500;
 const RUN_LOG_DETAIL_LIMIT = 2048;
+const DEBUG_DOM_SNIPPET_LIMIT = 500;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
 const SAFETY_STOP_PATTERNS = [
   'action blocked',
@@ -342,6 +343,10 @@ function getHistoryPath(): string {
 
 function getRunLogPath(): string {
   return path.join(getRoot(), 'ui', 'run-log.json');
+}
+
+function getDebugArtifactDir(): string {
+  return path.join(getRoot(), 'ui', 'debug');
 }
 
 function getQueuePath(): string {
@@ -663,6 +668,46 @@ async function appendRunLog(entry: Omit<RunLogEntry, 'id' | 'at'>): Promise<RunL
     );
   }
   return fullEntry;
+}
+
+function stripScriptTags(html: string): string {
+  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+}
+
+function compactHtmlSnippet(html: string): string {
+  return stripScriptTags(html).replace(/\s+/g, ' ').trim().slice(0, DEBUG_DOM_SNIPPET_LIMIT);
+}
+
+async function captureManualFailureArtifacts(
+  platform: ManualVerifyPlatform,
+  page: Page,
+): Promise<string> {
+  const dir = getDebugArtifactDir();
+  await fs.mkdir(dir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const baseName = `${platform}-${stamp}-${randomUUID().slice(0, 8)}`;
+  const screenshotPath = path.join(dir, `${baseName}.png`);
+  const domPath = path.join(dir, `${baseName}.txt`);
+  const url = page.url();
+
+  let screenshotDetail = 'screenshot unavailable';
+  try {
+    await page.screenshot({ path: screenshotPath, fullPage: false });
+    screenshotDetail = screenshotPath;
+  } catch (err) {
+    screenshotDetail = `screenshot failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  let domDetail = 'dom unavailable';
+  try {
+    const html = await page.content();
+    await fs.writeFile(domPath, `url: ${url}\n\n${compactHtmlSnippet(html)}\n`, 'utf8');
+    domDetail = domPath;
+  } catch (err) {
+    domDetail = `dom failed: ${err instanceof Error ? err.message : String(err)}`;
+  }
+
+  return `URL: ${url}\nScreenshot: ${screenshotDetail}\nDOM snippet: ${domDetail}`;
 }
 
 async function clearRunLog(): Promise<void> {
@@ -1810,11 +1855,19 @@ async function runManualCampaign(
         message: 'Form filled; waiting for manual submit',
       });
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const debugDetail = await captureManualFailureArtifacts(platform, page).catch(
+        (artifactErr) =>
+          `Debug artifact capture failed: ${
+            artifactErr instanceof Error ? artifactErr.message : String(artifactErr)
+          }`,
+      );
       results.push({
         platform,
         ok: false,
         status: 'failed',
-        error: err instanceof Error ? err.message : String(err),
+        error: errorMessage,
+        detail: debugDetail,
       });
       await appendRunLog({
         account: accountId,
@@ -1822,7 +1875,7 @@ async function runManualCampaign(
         scope: 'manual',
         level: 'error',
         message: 'Manual prepare failed',
-        detail: err instanceof Error ? err.message : String(err),
+        detail: `${errorMessage}\n${debugDetail}`,
       });
     }
   }

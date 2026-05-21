@@ -244,7 +244,7 @@ async function createPostViaDirectUrl(
 
     logLinkedIn(input, 'Typing LinkedIn post text');
     await humanClick(page, editorLocator);
-    await humanType(editorLocator, clampedText);
+    await humanType(editorLocator, clampedText, { naturalCadence: true });
 
     if (input.dryRun) {
       logLinkedIn(input, 'LinkedIn post ready for manual submit');
@@ -291,13 +291,13 @@ async function createPostViaDirectUrl(
   if (input.title !== undefined && input.title.trim().length > 0) {
     const titleLocator = page.locator(LINKEDIN.selectors.article.titleTextarea).first();
     await humanClick(page, titleLocator);
-    await humanType(titleLocator, input.title);
+    await humanType(titleLocator, input.title, { naturalCadence: true });
   }
 
   const bodyLocator = page.locator(LINKEDIN.selectors.article.bodyEditor).first();
   logLinkedIn(input, 'Typing LinkedIn article body');
   await humanClick(page, bodyLocator);
-  await humanType(bodyLocator, clampedText);
+  await humanType(bodyLocator, clampedText, { naturalCadence: true });
 
   await jitterSleep(800, 0.4);
   logLinkedIn(input, 'Opening LinkedIn article share modal');
@@ -313,7 +313,7 @@ async function createPostViaDirectUrl(
   if (input.shareIntro !== undefined && input.shareIntro.trim().length > 0) {
     const introLocator = page.locator(LINKEDIN.selectors.article.shareModalIntroEditor).first();
     await humanClick(page, introLocator);
-    await humanType(introLocator, input.shareIntro);
+    await humanType(introLocator, input.shareIntro, { naturalCadence: true });
   }
 
   if (input.dryRun) {
@@ -446,7 +446,7 @@ export async function createPost(
 
   logLinkedIn(resolvedInput, 'Typing LinkedIn composer text');
   await humanClick(page, editorLocator);
-  await humanType(editorLocator, clampedText);
+  await humanType(editorLocator, clampedText, { naturalCadence: true });
 
   if (resolvedInput.imagePath !== undefined) {
     try {

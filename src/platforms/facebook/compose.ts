@@ -11,8 +11,8 @@ export interface FacebookLocalizedLabels {
 }
 
 export interface FacebookComposeInput {
-  // Full URL of the target Page or Profile composer context (e.g. https://www.facebook.com/<page-id>).
-  // We don't auto-resolve — caller must know the Page they want to post to.
+  // Full URL of the target Page or Profile composer context.
+  // Caller owns choosing the Page/profile context they want to post to.
   pageUrl: string;
   text: string;
   // Image upload. Single image supported; multi-image not (FB modal varies; keep simple).
@@ -24,6 +24,11 @@ export interface FacebookComposeInput {
   facebookPageName?: string;
   /** When true, skips the final publish click. */
   dryRun?: boolean;
+  onLog?: (message: string, detail?: string) => void;
+}
+
+function logFacebook(input: FacebookComposeInput, message: string, detail?: string): void {
+  input.onLog?.(message, detail);
 }
 
 async function clickFirstVisible(
@@ -64,6 +69,61 @@ async function setFirstAttachedFileInput(
   );
 }
 
+function facebookComposerTriggers(page: Page): Locator[] {
+  return [
+    page.locator(FACEBOOK.selectors.composer.inlinePlaceholder),
+    page.getByRole('button', { name: /^(Create post|What's on your mind.*)$/i }),
+    page.locator("div[role='button']:has-text('Create post')"),
+    page.locator(FACEBOOK.selectors.composer.inlineRegion).getByRole('button').first(),
+    page.locator(FACEBOOK.selectors.composer.inlinePhotoVideo),
+  ];
+}
+
+async function switchIntoPageIfPromptVisible(
+  page: Page,
+  input: FacebookComposeInput,
+): Promise<boolean> {
+  const switched = await clickFirstVisible(
+    page,
+    [
+      page.getByRole('button', { name: /^Switch Now$/i }),
+      page.getByRole('button', { name: /^Switch$/i }),
+      page.locator("div[role='button']:has-text('Switch Now')"),
+      page.locator("div[role='button']:has-text('Switch')"),
+    ],
+    2500,
+  ).catch(() => false);
+
+  if (!switched) return false;
+  logFacebook(input, 'Facebook page-management switch clicked');
+  await page
+    .waitForLoadState('networkidle', { timeout: FACEBOOK.timeouts.mediumMs })
+    .catch(() => undefined);
+  await jitterSleep(1500, 0.5);
+  return true;
+}
+
+async function openFacebookComposer(page: Page, input: FacebookComposeInput): Promise<void> {
+  const firstAttempt = await clickFirstVisible(
+    page,
+    facebookComposerTriggers(page),
+    FACEBOOK.timeouts.shortMs,
+  ).catch(() => false);
+  if (firstAttempt) return;
+
+  const switched = await switchIntoPageIfPromptVisible(page, input);
+  if (switched) {
+    const secondAttempt = await clickFirstVisible(
+      page,
+      facebookComposerTriggers(page),
+      FACEBOOK.timeouts.mediumMs,
+    ).catch(() => false);
+    if (secondAttempt) return;
+  }
+
+  throw new Error(`Facebook no composer trigger found at ${page.url()}`);
+}
+
 // Drives the composer on an already-authenticated page. Throws on unrecoverable error.
 export async function createPost(page: Page, input: FacebookComposeInput): Promise<void> {
   // --- Step 0: Switch to page identity (if requested) ---
@@ -89,19 +149,11 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
   // --- Step 1: Navigate ---
   await page.goto(input.pageUrl, { waitUntil: 'domcontentloaded' });
   await jitterSleep(1500, 0.6);
+  await switchIntoPageIfPromptVisible(page, input);
 
-  // --- Step 2: Click the inline "What's on your mind" placeholder to open the modal ---
-  const triggerClicked = await clickFirstVisible(
-    page,
-    [page.locator(FACEBOOK.selectors.composer.inlinePlaceholder)],
-    FACEBOOK.timeouts.shortMs,
-  ).catch(() => false);
-
-  if (!triggerClicked) {
-    throw new Error(
-      'Could not find Facebook inline create-post placeholder ("What\'s on your mind") — the page layout may have changed',
-    );
-  }
+  // --- Step 2: Click a visible composer trigger to open the modal ---
+  await openFacebookComposer(page, input);
+  logFacebook(input, 'Facebook composer trigger clicked');
 
   // --- Step 3: Wait for Stage 1 composer modal ---
   await page
@@ -142,14 +194,15 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
       FACEBOOK.timeouts.mediumMs,
     );
 
-    // Wait for FB's preview render (inconsistent timing — flat sleep is simplest here)
+    // Wait for FB's preview render (inconsistent timing; flat sleep is simplest here).
     await jitterSleep(3000, 0.5);
   }
 
-  // --- Step 6: Dry-run guard — stop before clicking Next if dryRun is true ---
+  // --- Step 6: Dry-run guard: stop before clicking Next if dryRun is true ---
   if (input.dryRun === true) {
+    logFacebook(input, 'Facebook post ready for manual submit');
     console.log(
-      '[facebook] dry-run: typed content but did not click Next or Post — modal stays open for inspection',
+      '[facebook] dry-run: typed content but did not click Next or Post; modal stays open for inspection',
     );
     return;
   }

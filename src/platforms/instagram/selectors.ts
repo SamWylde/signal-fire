@@ -86,6 +86,8 @@ export const INSTAGRAM = {
         "//*[contains(text(),'Your post has been shared') or contains(text(),'has been shared')]",
 
       // The Reels-vs-Post selector in the modal (Instagram offers both)
+      postMenuItem:
+        "xpath=//*[@role='menuitem' or @role='button' or @role='link' or self::a][normalize-space()='Post' or .//*[normalize-space()='Post']]",
       postTypeReel: "//div[@role='button']//span[contains(text(),'Reel')]",
       postTypePost: "//div[@role='button']//span[contains(text(),'Post')]",
     },

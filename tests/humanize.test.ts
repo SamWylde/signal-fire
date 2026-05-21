@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildNaturalTypingPlan,
   jitterSleep,
   randomFloat,
   randomInt,
@@ -71,5 +72,59 @@ describe('selectAllShortcut', () => {
     expect(selectAllShortcut('darwin')).toBe('Meta+A');
     expect(selectAllShortcut('win32')).toBe('Control+A');
     expect(selectAllShortcut('linux')).toBe('Control+A');
+  });
+});
+
+describe('buildNaturalTypingPlan', () => {
+  it('groups words into bursts and spaces into pauses', () => {
+    const plan = buildNaturalTypingPlan('GrantCue helps teams', { rng: () => 0.5 });
+
+    expect(plan.map((step) => [step.kind, step.text])).toEqual([
+      ['word', 'GrantCue'],
+      ['space', ' '],
+      ['word', 'helps'],
+      ['space', ' '],
+      ['word', 'teams'],
+    ]);
+    expect(plan[0]?.keyDelayMs).toBeLessThan(plan[1]?.delayAfterMs ?? 0);
+  });
+
+  it('uses longer punctuation pauses than space pauses', () => {
+    const plan = buildNaturalTypingPlan('Hello, world.', { rng: () => 0.5 });
+    const comma = plan.find((step) => step.text === ',');
+    const space = plan.find((step) => step.kind === 'space');
+
+    expect(comma?.kind).toBe('punctuation');
+    expect(comma?.delayAfterMs ?? 0).toBeGreaterThan(space?.delayAfterMs ?? 0);
+  });
+
+  it('respects explicit delay ranges for word bursts', () => {
+    const plan = buildNaturalTypingPlan('abc', {
+      delayRange: [10, 20],
+      rng: () => 1,
+    });
+
+    expect(plan).toHaveLength(1);
+    expect(plan[0]?.keyDelayMs).toBe(20);
+    expect(plan[0]?.text).toBe('abc');
+  });
+
+  it('samples fresh key delays inside a word burst', () => {
+    const samples = [0.5, 0.5, 0, 0.5, 1];
+    const plan = buildNaturalTypingPlan('abc', {
+      delayRange: [10, 20],
+      rng: () => samples.shift() ?? 0.5,
+    });
+
+    expect(plan[0]?.keyDelayMsByChar).toEqual([10, 12.5, 20]);
+  });
+
+  it('does not introduce typo text into the plan', () => {
+    const text = 'No typos, please.';
+    const typed = buildNaturalTypingPlan(text, { rng: () => 0.01 })
+      .map((step) => step.text)
+      .join('');
+
+    expect(typed).toBe(text);
   });
 });
