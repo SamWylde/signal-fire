@@ -97,6 +97,8 @@ export interface CampaignAssets {
   videoPath?: string;
   coverPath?: string;
   thumbnailPath?: string;
+  platformImages?: Partial<Record<PostingPlatform, string>>;
+  platformVideos?: Partial<Record<PostingPlatform, string>>;
 }
 
 interface StoredCampaign {
@@ -1477,14 +1479,15 @@ function buildCampaignInput(
 
   switch (platform) {
     case 'tiktok': {
-      if (assets.videoPath === undefined) throw new Error('Video is required for TikTok');
+      const videoPath = assets.platformVideos?.['tiktok'] ?? assets.videoPath;
+      if (videoPath === undefined) throw new Error('Video is required for TikTok');
       const tiktokDescription =
         formString(form, 'tiktokText') ?? formString(form, 'text') ?? description;
       if (tiktokDescription === undefined)
         throw new Error('Text or description is required for TikTok');
       const productId = formString(form, 'productId');
       return {
-        videoPath: assets.videoPath,
+        videoPath,
         description: tiktokDescription,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
@@ -1531,12 +1534,15 @@ function buildCampaignInput(
         );
         postAs = 'personal';
       }
+      const facebookImagePath = assets.platformImages?.['facebook'] ?? assets.imagePath;
+      const facebookVideoPath = assets.platformVideos?.['facebook'] ?? assets.videoPath;
       return {
         pageUrl,
         text: facebookText,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
-        ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
+        ...(facebookImagePath !== undefined && { imagePath: facebookImagePath }),
+        ...(facebookVideoPath !== undefined && { videoPath: facebookVideoPath }),
         postAs,
         ...(facebookPageName !== undefined &&
           facebookPageName.trim().length > 0 && { facebookPageName: facebookPageName.trim() }),
@@ -1555,11 +1561,12 @@ function buildCampaignInput(
         formString(form, 'linkedinPostType') === 'article' ? 'article' : 'post';
       const linkedinTitle = formString(form, 'linkedinTitle');
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
+      const linkedinImagePath = assets.platformImages?.['linkedin'] ?? assets.imagePath;
       return {
         text: linkedinText,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
-        ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
+        ...(linkedinImagePath !== undefined && { imagePath: linkedinImagePath }),
         target,
         ...(companyPageUrl !== undefined && { companyPageUrl }),
         ...(linkedinCompanyId !== undefined && { linkedinCompanyId }),
@@ -1571,12 +1578,13 @@ function buildCampaignInput(
     case 'youtube': {
       const youtubeTitle = formString(form, 'youtubeBaseTitle') ?? title;
       const youtubeDescription = formString(form, 'youtubeText') ?? description;
-      if (assets.videoPath === undefined) throw new Error('Video is required for YouTube');
+      const youtubeVideoPath = assets.platformVideos?.['youtube'] ?? assets.videoPath;
+      if (youtubeVideoPath === undefined) throw new Error('Video is required for YouTube');
       if (youtubeTitle === undefined) throw new Error('Title is required for YouTube');
       const tags = campaignTags(form);
       const playlist = formString(form, 'playlist');
       return {
-        videoPath: assets.videoPath,
+        videoPath: youtubeVideoPath,
         title: youtubeTitle,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
@@ -1591,11 +1599,14 @@ function buildCampaignInput(
     }
     case 'instagram': {
       const instagramCaption = formString(form, 'instagramText') ?? text;
-      if (assets.imagePath === undefined) throw new Error('Image is required for Instagram');
+      const instagramImagePath = assets.platformImages?.['instagram'] ?? assets.imagePath;
+      const instagramVideoPath = assets.platformVideos?.['instagram'] ?? assets.videoPath;
+      if (instagramImagePath === undefined) throw new Error('Image is required for Instagram');
       return {
-        imagePath: assets.imagePath,
+        imagePath: instagramImagePath,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
+        ...(instagramVideoPath !== undefined && { videoPath: instagramVideoPath }),
         ...(instagramCaption !== undefined && { caption: instagramCaption }),
       };
     }
@@ -1698,11 +1709,22 @@ async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
   const videoPath = await optionalFileOrSaved(form, 'video', bucket);
   const coverPath = await optionalFileOrSaved(form, 'cover', bucket);
   const thumbnailPath = await optionalFileOrSaved(form, 'thumbnail', bucket);
+  const platforms = ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'] as const;
+  const platformImages: Partial<Record<PostingPlatform, string>> = {};
+  const platformVideos: Partial<Record<PostingPlatform, string>> = {};
+  for (const platform of platforms) {
+    const img = await optionalFileOrSaved(form, `${platform}Image`, platform);
+    if (img !== undefined) platformImages[platform] = img;
+    const vid = await optionalFileOrSaved(form, `${platform}Video`, platform);
+    if (vid !== undefined) platformVideos[platform] = vid;
+  }
   return {
     ...(imagePath !== undefined && { imagePath }),
     ...(videoPath !== undefined && { videoPath }),
     ...(coverPath !== undefined && { coverPath }),
     ...(thumbnailPath !== undefined && { thumbnailPath }),
+    platformImages,
+    platformVideos,
   };
 }
 
