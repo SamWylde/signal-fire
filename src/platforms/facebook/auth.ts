@@ -79,9 +79,8 @@ export async function applyFacebookAuth(
 
 export async function isLoggedIn(page: Page): Promise<boolean> {
   try {
-    await page.goto(FACEBOOK.urls.home, { waitUntil: 'domcontentloaded' });
-
-    // 1. Cookie check — c_user + xs together are the decisive auth signal
+    // 1. Cookie check — c_user + xs together are the decisive auth signal.
+    // Read from the cookie store directly; no navigation needed.
     try {
       const cookies = await page.context().cookies(FACEBOOK.urls.home);
       const cookieNames = new Set(
@@ -89,8 +88,11 @@ export async function isLoggedIn(page: Page): Promise<boolean> {
       );
       if (cookieNames.has('c_user') && cookieNames.has('xs')) return true;
     } catch {
-      // Cookie API unavailable; fall through to DOM check.
+      // Cookie API unavailable; fall through to navigation-based checks.
     }
+
+    // Cookies inconclusive — navigate to Facebook to perform DOM/URL checks.
+    await page.goto(FACEBOOK.urls.home, { waitUntil: 'domcontentloaded' });
 
     // 2. URL check — if still on the login page, we're definitely logged out
     try {
