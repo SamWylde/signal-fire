@@ -1,4 +1,5 @@
 import { type LaunchOptions, launchBrowser } from '../../core/browser.js';
+import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
@@ -64,6 +65,7 @@ export async function post(
       result = await completeUpload(page, input);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const debugArtifacts = await captureFailureArtifacts('youtube', page).catch(() => undefined);
       await recordAction('youtube', accountId, 'post', {
         ok: false,
         meta: {
@@ -73,7 +75,11 @@ export async function post(
           hasThumbnail: input.thumbnailPath !== undefined,
         },
       });
-      return { ok: false, error: msg };
+      return {
+        ok: false,
+        error: msg,
+        ...(debugArtifacts !== undefined && { debugArtifacts }),
+      };
     }
 
     // 7. Mark persistent session as validated

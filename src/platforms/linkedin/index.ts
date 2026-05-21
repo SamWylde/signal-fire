@@ -1,4 +1,5 @@
 import { type LaunchOptions, launchBrowser } from '../../core/browser.js';
+import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
@@ -59,6 +60,7 @@ export async function post(
       result = await createPost(page, input);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const debugArtifacts = await captureFailureArtifacts('linkedin', page).catch(() => undefined);
       await recordAction('linkedin', accountId, 'post', {
         ok: false,
         meta: {
@@ -66,7 +68,11 @@ export async function post(
           target: input.target ?? (input.companyPageUrl !== undefined ? 'company' : 'profile'),
         },
       });
-      return { ok: false, error: msg };
+      return {
+        ok: false,
+        error: msg,
+        ...(debugArtifacts !== undefined && { debugArtifacts }),
+      };
     }
 
     // 6. Mark persistent session as validated

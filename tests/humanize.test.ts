@@ -127,4 +127,15 @@ describe('buildNaturalTypingPlan', () => {
 
     expect(typed).toBe(text);
   });
+
+  it('uses faster default natural cadence timings', () => {
+    const plan = buildNaturalTypingPlan('a b.', { rng: () => 1 });
+    const word = plan.find((step) => step.kind === 'word');
+    const space = plan.find((step) => step.kind === 'space');
+    const punctuation = plan.find((step) => step.kind === 'punctuation');
+
+    expect(word?.keyDelayMs).toBe(60);
+    expect(space?.delayAfterMs).toBe(225);
+    expect(punctuation?.delayAfterMs).toBe(375);
+  });
 });

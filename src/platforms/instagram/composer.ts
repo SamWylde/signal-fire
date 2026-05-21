@@ -70,7 +70,11 @@ async function setFirstAttachedFileInput(
 function actionButtonLocators(page: Page, label: 'Next' | 'Share'): Locator[] {
   return [
     page.getByRole('button', { name: new RegExp(`^${label}$`, 'i') }),
-    page.locator(`xpath=//*[@role='button' and normalize-space()='${label}']`),
+    page.locator(
+      `xpath=//*[self::button or self::a or @role='button'][normalize-space()='${label}' or .//*[normalize-space()='${label}']]`,
+    ),
+    page.locator(`[role='button']:has-text("${label}")`),
+    page.locator(`div[role='button']:has-text("${label}")`),
     page.locator(
       label === 'Next'
         ? INSTAGRAM.selectors.composer.nextButton
@@ -95,6 +99,49 @@ async function clickPostMenuIfPresent(page: Page, input: InstagramComposeInput):
     logInstagram(input, 'Instagram Post menu item selected');
     await jitterSleep(800, 0.4);
   }
+}
+
+async function visibleScreenSummary(page: Page): Promise<string> {
+  const headings = await page
+    .locator('[role="heading"], h1, h2, h3')
+    .evaluateAll((nodes) =>
+      nodes
+        .map((node) => (node.textContent ?? '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean)
+        .slice(0, 5),
+    )
+    .catch(() => []);
+  return `url=${page.url()}; headings=${headings.length > 0 ? headings.join(' | ') : 'none'}`;
+}
+
+async function clickNextWithRetry(
+  page: Page,
+  input: InstagramComposeInput,
+  screenName: string,
+): Promise<void> {
+  logInstagram(input, `Looking for ${screenName} Next button`);
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const clicked = await clickFirstUsable(page, actionButtonLocators(page, 'Next'), 2500).catch(
+      (err) => {
+        lastError = err;
+        return false;
+      },
+    );
+    if (clicked) {
+      logInstagram(input, `${screenName} Next button clicked`, `attempt ${attempt}`);
+      await page.waitForTimeout(800);
+      return;
+    }
+    await page.waitForTimeout(1000);
+  }
+
+  throw new Error(
+    `Could not click Instagram ${screenName} Next button after 3 attempts (${await visibleScreenSummary(page)}): ${
+      lastError instanceof Error ? lastError.message : String(lastError ?? 'button not found')
+    }`,
+  );
 }
 
 // Drives the new-post wizard on an authenticated page. Throws on unrecoverable error or
@@ -190,6 +237,7 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
   await page
     .locator(INSTAGRAM.selectors.composer.cropScreenHeading)
     .waitFor({ state: 'visible', timeout: 15_000 });
+  logInstagram(input, 'Instagram Crop screen detected');
 
   // Click Next until the Share button appears (caption screen) or we hit the max.
   // Max 2: once from Crop to Edit, once from Edit to Caption.
@@ -200,17 +248,21 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
       // Reached the caption screen — stop clicking Next.
       break;
     }
-    const nextLocator = page.locator(INSTAGRAM.selectors.composer.nextButton);
-    await nextLocator.first().waitFor({ state: 'visible', timeout: 5_000 });
-    await humanClick(page, INSTAGRAM.selectors.composer.nextButton);
-    await page.waitForTimeout(800); // wait for screen transition
+    await clickNextWithRetry(page, input, i === 0 ? 'Crop' : 'Edit');
   }
 
   // --- Step 10: Fill caption ---
   // Wait for the Share button to confirm we've reached the Caption screen.
   await page
     .locator(INSTAGRAM.selectors.composer.shareButton)
-    .waitFor({ state: 'visible', timeout: mediumMs });
+    .waitFor({ state: 'visible', timeout: mediumMs })
+    .catch(async (err) => {
+      throw new Error(
+        `Could not reach Instagram caption screen after advancing upload flow (${await visibleScreenSummary(page)}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    });
 
   if (input.caption !== undefined) {
     let captionText = input.caption;

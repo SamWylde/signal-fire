@@ -1,3 +1,5 @@
+import type { DebugCaptureResult } from './debug-artifacts.js';
+
 export type Platform =
   | 'tiktok'
   | 'x'
@@ -21,4 +23,5 @@ export interface PostResult {
   ok: boolean;
   url?: string;
   error?: string;
+  debugArtifacts?: DebugCaptureResult;
 }

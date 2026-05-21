@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
-import * as os from 'node:os';
 import * as path from 'node:path';
 import { Readable } from 'node:stream';
 
-import { migrateLegacyAccountIds, sanitizeAccountId } from '../core/account-id.js';
+import {
+  getSignalFireHome,
+  migrateLegacyAccountIds,
+  sanitizeAccountId,
+} from '../core/account-id.js';
 import {
   type BrowserContext,
   type LaunchOptions,
@@ -17,6 +20,7 @@ import {
   readStoredCredentials,
   writeStoredCredentials,
 } from '../core/credential-store.js';
+import { captureFailureArtifacts } from '../core/debug-artifacts.js';
 import { countRecent } from '../core/ledger.js';
 import type { ActionLimits } from '../core/rate-limiter.js';
 import {
@@ -318,7 +322,6 @@ const HISTORY_LIMIT = 250;
 const RUN_LOG_LIMIT = 500;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const RUN_LOG_DETAIL_LIMIT = 2048;
-const DEBUG_DOM_SNIPPET_LIMIT = 500;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
 const SAFETY_STOP_PATTERNS = [
   'action blocked',
@@ -340,7 +343,7 @@ function isPostingPlatform(value: unknown): value is PostingPlatform {
 }
 
 function getRoot(): string {
-  return process.env.SIGNAL_FIRE_HOME ?? path.join(os.homedir(), '.signal-fire');
+  return getSignalFireHome();
 }
 
 function getUiStatePath(): string {
@@ -355,10 +358,6 @@ function getRunLogPath(): string {
   return path.join(getRoot(), 'ui', 'run-log.json');
 }
 
-function getDebugArtifactDir(): string {
-  return path.join(getRoot(), 'ui', 'debug');
-}
-
 function getUploadRoot(): string {
   return path.join(getRoot(), 'uploads');
 }
@@ -370,6 +369,32 @@ function getQueuePath(): string {
 function sanitizeFileName(name: string): string {
   const base = path.basename(name || 'upload.bin');
   return base.replace(/[^A-Za-z0-9_. -]/g, '_');
+}
+
+function canonicalExtensionForMime(mime: string): string | undefined {
+  switch (mime.trim().toLowerCase().split(';')[0]) {
+    case 'image/jpeg':
+    case 'image/jpg':
+      return '.jpg';
+    case 'image/png':
+      return '.png';
+    case 'image/webp':
+      return '.webp';
+    case 'image/gif':
+      return '.gif';
+    case 'video/mp4':
+      return '.mp4';
+    case 'video/quicktime':
+      return '.mov';
+    default:
+      return undefined;
+  }
+}
+
+function savedUploadFileName(file: File): string {
+  const safeName = sanitizeFileName(file.name);
+  if (path.extname(safeName).length > 0) return safeName;
+  return `${safeName}${canonicalExtensionForMime(file.type) ?? ''}`;
 }
 
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
@@ -477,7 +502,7 @@ export async function saveUploadedFile(file: File, bucket: string): Promise<stri
 
   const filePath = path.join(
     uploadDir,
-    `${Date.now()}-${randomUUID().slice(0, 8)}-${sanitizeFileName(file.name)}`,
+    `${Date.now()}-${randomUUID().slice(0, 8)}-${savedUploadFileName(file)}`,
   );
   await fs.writeFile(filePath, Buffer.from(await file.arrayBuffer()));
   return filePath;
@@ -762,46 +787,6 @@ async function appendRunLog(entry: Omit<RunLogEntry, 'id' | 'at'>): Promise<RunL
     );
   }
   return fullEntry;
-}
-
-function stripScriptTags(html: string): string {
-  return html.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
-}
-
-function compactHtmlSnippet(html: string): string {
-  return stripScriptTags(html).replace(/\s+/g, ' ').trim().slice(0, DEBUG_DOM_SNIPPET_LIMIT);
-}
-
-async function captureManualFailureArtifacts(
-  platform: ManualVerifyPlatform,
-  page: Page,
-): Promise<string> {
-  const dir = getDebugArtifactDir();
-  await fs.mkdir(dir, { recursive: true });
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const baseName = `${platform}-${stamp}-${randomUUID().slice(0, 8)}`;
-  const screenshotPath = path.join(dir, `${baseName}.png`);
-  const domPath = path.join(dir, `${baseName}.txt`);
-  const url = page.url();
-
-  let screenshotDetail = 'screenshot unavailable';
-  try {
-    await page.screenshot({ path: screenshotPath, fullPage: false });
-    screenshotDetail = screenshotPath;
-  } catch (err) {
-    screenshotDetail = `screenshot failed: ${err instanceof Error ? err.message : String(err)}`;
-  }
-
-  let domDetail = 'dom unavailable';
-  try {
-    const html = await page.content();
-    await fs.writeFile(domPath, `url: ${url}\n\n${compactHtmlSnippet(html)}\n`, 'utf8');
-    domDetail = domPath;
-  } catch (err) {
-    domDetail = `dom failed: ${err instanceof Error ? err.message : String(err)}`;
-  }
-
-  return `URL: ${url}\nScreenshot: ${screenshotDetail}\nDOM snippet: ${domDetail}`;
 }
 
 async function clearRunLog(): Promise<void> {
@@ -1691,12 +1676,16 @@ async function runCampaignNow(
           message: 'Opening browser and composer',
         });
         const result = await invokePost(platform, input, accountId, launchOptions, rateLimits);
+        const resultDetail = result.ok
+          ? result.url
+          : [result.error, result.debugArtifacts?.summary].filter(Boolean).join('\n') || undefined;
         results.push({
           platform,
           ok: result.ok,
           status: result.ok ? 'posted' : 'failed',
           ...(result.url !== undefined && { url: result.url }),
           ...(result.error !== undefined && { error: result.error }),
+          ...(resultDetail !== undefined && { detail: resultDetail }),
         });
         await appendRunLog({
           account: accountId,
@@ -1704,8 +1693,7 @@ async function runCampaignNow(
           scope: 'campaign',
           level: result.ok ? 'success' : 'error',
           message: result.ok ? 'Live post completed' : 'Live post failed',
-          ...(result.url !== undefined && { detail: result.url }),
-          ...(result.error !== undefined && { detail: result.error }),
+          ...(resultDetail !== undefined && { detail: resultDetail }),
         });
 
         if (
@@ -1934,12 +1922,14 @@ async function runManualCampaign(
       });
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
-      const debugDetail = await captureManualFailureArtifacts(platform, page).catch(
-        (artifactErr) =>
-          `Debug artifact capture failed: ${
-            artifactErr instanceof Error ? artifactErr.message : String(artifactErr)
-          }`,
-      );
+      const debugDetail = await captureFailureArtifacts(platform, page)
+        .then((artifacts) => artifacts.summary)
+        .catch(
+          (artifactErr) =>
+            `Debug artifact capture failed: ${
+              artifactErr instanceof Error ? artifactErr.message : String(artifactErr)
+            }`,
+        );
       results.push({
         platform,
         ok: false,
