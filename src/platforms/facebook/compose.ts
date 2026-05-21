@@ -188,12 +188,43 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
 
   // --- Step 4: Focus the Lexical text editor and type text ---
   const textEditor = page.locator(FACEBOOK.selectors.composer.textEditor).first();
+  await textEditor.waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+
+  // Explicit focus before typing. The Lexical editor doesn't always accept the
+  // humanMouseClick inside humanType (re-renders, overlays). Click + verify, with
+  // a fallback to .focus() if the click didn't take.
+  await humanClick(page, textEditor);
+  await jitterSleep(400, 0.4);
+
+  let focused = await textEditor.evaluate((el) => el === document.activeElement);
+  if (!focused) {
+    await textEditor.focus().catch(() => undefined);
+    await jitterSleep(300, 0.4);
+    focused = await textEditor.evaluate((el) => el === document.activeElement);
+  }
+  if (!focused) {
+    throw new Error(
+      'Facebook composer editor did not accept focus; cannot type. The composer may have failed to open or a modal is intercepting input.',
+    );
+  }
+
   await humanType(textEditor, input.text, {
     naturalCadence: true,
     ...(input.typingSpeedMultiplier !== undefined && { typingSpeedMultiplier: input.typingSpeedMultiplier }),
     ...(input.wordPauseMaxMs !== undefined && { wordPauseMaxMs: input.wordPauseMaxMs }),
   });
   await jitterSleep(500, 0.5);
+
+  // Verify the text actually landed in the editor. If FB's single-character-shortcut
+  // prompt (triggered by typing "/") or another overlay stole focus mid-type, the
+  // editor will be empty or missing trailing characters.
+  const editorText = await textEditor.evaluate((el) => el.textContent ?? '');
+  const sample = input.text.slice(0, 20).trim();
+  if (sample.length > 0 && !editorText.includes(sample)) {
+    throw new Error(
+      `Facebook composer text did not land in the editor. Expected to contain "${sample}", found "${editorText.slice(0, 60)}". Focus was likely lost during typing.`,
+    );
+  }
 
   // --- Step 5: Image upload (if provided) ---
   if (input.imagePath !== undefined) {
