@@ -425,6 +425,11 @@ export async function createPost(
     { timeout: mediumMs },
   );
 
+  if (input.dryRun) {
+    process.stderr.write('[linkedin] dry-run: would click "Post" to submit\n');
+    return { success: true, dryRun: true } as LinkedInComposeResult;
+  }
+
   let postClickError: unknown = null;
 
   try {

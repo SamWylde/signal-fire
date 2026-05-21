@@ -606,7 +606,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         <div class="toolbar">
           <button id="refreshStatus" class="btn ghost" type="button">Refresh</button>
           <button id="saveDraft" class="btn compose-action" type="button">Save draft</button>
-          <button id="dryRun" class="btn compose-action" type="button">Ready check</button>
+          <button id="checkForm" class="btn compose-action" type="button">Check form</button>
+          <button id="manualVerifyTop" class="btn compose-action" type="button">Prepare 0 (manual)</button>
           <button id="postSelectedTop" class="btn primary compose-action" type="button">Post to 0</button>
         </div>
       </div>
@@ -1446,6 +1447,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       setCredentialButtonsEnabled(true);
       var targets = selectedTargets();
       document.getElementById('targetCount').textContent = targets.length + ' of 6';
+      document.getElementById('manualVerifyTop').textContent = 'Prepare ' + targets.length + ' (manual)';
       document.getElementById('postSelectedTop').textContent = 'Post to ' + targets.length;
       var baseText = document.getElementById('textInput').value || '';
       document.getElementById('charCount').textContent = String(baseText.length);
@@ -1667,12 +1669,15 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function resultTone(result) {
       var label = resultLabel(result);
       if (label === 'posted') return 'ok';
-      if (label === 'queued' || label === 'posting') return 'warn';
+      if (label === 'queued' || label === 'posting' || label === 'prepared') return 'warn';
       if (label === 'skipped' || label === 'canceled') return 'none';
       return result.ok ? 'ok' : 'bad';
     }
 
     function resultDetail(result) {
+      if (resultLabel(result) === 'prepared' && !result.detail) {
+        return 'Form filled - submit manually in browser tab';
+      }
       return result.detail || result.url || result.error || '-';
     }
 
@@ -1875,13 +1880,95 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       });
     }
 
-    async function runCampaign() {
-      setBottom('Posting selected platforms sequentially...', '');
-      document.getElementById('postSelectedTop').disabled = true;
+    function buildCampaignForm() {
       var form = new FormData(formEl);
       form.set('account', currentAccount());
       if (useProfileEl.checked) form.set('useBrowserProfile', 'on');
       appendOverrideFields(form);
+      return form;
+    }
+
+    function setComposeActionBusy(busy) {
+      document.getElementById('postSelectedTop').disabled = busy;
+      document.getElementById('manualVerifyTop').disabled = busy;
+      document.getElementById('checkForm').disabled = busy;
+    }
+
+    function selectedTargetNames(targets) {
+      return targets.map(function(platform) { return platformNames[platform] || platform; }).join(', ');
+    }
+
+    function fileSelected(name) {
+      var input = document.querySelector('[name="' + name + '"]');
+      return Boolean(input && input.value);
+    }
+
+    function checkComposeForm() {
+      var errors = [];
+      var targets = selectedTargets();
+      var text = document.getElementById('textInput').value.trim();
+      if (currentAccount().length === 0) errors.push('Choose an account.');
+      if (targets.length === 0) errors.push('Choose at least one target.');
+      if (
+        !text &&
+        targets.some(function(platform) {
+          return platform === 'x' || platform === 'facebook' || platform === 'linkedin';
+        })
+      ) {
+        errors.push('Add post text for X, Facebook, or LinkedIn.');
+      }
+      if (targets.indexOf('facebook') !== -1 && !document.querySelector('[name="pageUrl"]').value.trim()) {
+        errors.push('Add a Facebook page/profile URL.');
+      }
+      if (
+        targets.indexOf('linkedin') !== -1 &&
+        document.querySelector('[name="linkedinTarget"]').value === 'company' &&
+        !document.querySelector('[name="linkedinCompanyPageUrl"]').value.trim() &&
+        !document.querySelector('[name="linkedinCompanyId"]').value.trim()
+      ) {
+        errors.push('Add a LinkedIn company page URL or company ID.');
+      }
+      if (targets.indexOf('instagram') !== -1 && !fileSelected('image')) {
+        errors.push('Choose an image for Instagram.');
+      }
+      if ((targets.indexOf('tiktok') !== -1 || targets.indexOf('youtube') !== -1) && !fileSelected('video')) {
+        errors.push('Choose a video for TikTok or YouTube.');
+      }
+
+      if (errors.length > 0) {
+        var message = errors.join(' ');
+        showToast('Check form', message, 'bad');
+        setBottom(message, 'bad');
+        return false;
+      }
+
+      showToast('Check form', 'Required fields are present for ' + selectedTargetNames(targets) + '.', 'good');
+      setBottom('Required fields are present.', 'good');
+      return true;
+    }
+
+    function checkManualVerifyForm() {
+      var targets = selectedTargets();
+      var unsupported = targets.filter(function(platform) {
+        return ['linkedin', 'x', 'facebook', 'instagram'].indexOf(platform) === -1;
+      });
+      if (unsupported.length > 0) {
+        setBottom('Manual prepare supports LinkedIn, X, Facebook, and Instagram. Remove: ' + selectedTargetNames(unsupported), 'bad');
+        return false;
+      }
+      return checkComposeForm();
+    }
+
+    async function runCampaign() {
+      if (!checkComposeForm()) return;
+      var targets = selectedTargets();
+      var confirmed = window.confirm(
+        'This will publish live to ' + targets.length + ' selected platform' + (targets.length === 1 ? '' : 's') + '. Use Prepare ' + targets.length + ' (manual) for review-only testing. Continue?'
+      );
+      if (!confirmed) return;
+      setBottom('Posting selected platforms sequentially...', '');
+      setComposeActionBusy(true);
+      var form = buildCampaignForm();
       try {
         await saveStateNow();
         var result = await api('/api/campaign', { method: 'POST', body: form });
@@ -1897,7 +1984,29 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       } catch (err) {
         setBottom(err.message, 'bad');
       } finally {
-        document.getElementById('postSelectedTop').disabled = false;
+        setComposeActionBusy(false);
+      }
+    }
+
+    async function runManualVerify() {
+      if (!checkManualVerifyForm()) return;
+      setBottom('Preparing selected platforms for manual submit...', '');
+      setComposeActionBusy(true);
+      var form = buildCampaignForm();
+      try {
+        await saveStateNow();
+        var result = await api('/api/campaign/manual', { method: 'POST', body: form });
+        renderResults(result.results);
+        setBottom(
+          result.campaignOk ? 'Manual preparation finished. Submit manually in the open browser tabs.' : 'Manual preparation finished with failures.',
+          result.campaignOk ? 'good' : 'bad'
+        );
+        await refreshHistory();
+        await refreshStatus();
+      } catch (err) {
+        setBottom(err.message, 'bad');
+      } finally {
+        setComposeActionBusy(false);
       }
     }
 
@@ -1935,9 +2044,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       runCampaign();
     });
     document.getElementById('postSelectedTop').addEventListener('click', runCampaign);
-    document.getElementById('dryRun').addEventListener('click', function() {
-      showToast('Ready check', 'Selected targets and inputs are ready for a manual review.', 'good');
-    });
+    document.getElementById('manualVerifyTop').addEventListener('click', runManualVerify);
+    document.getElementById('checkForm').addEventListener('click', checkComposeForm);
     document.getElementById('saveDraft').addEventListener('click', function() {
       saveStateNow().then(function() { showToast('Draft saved', 'Local draft state updated.', 'good'); }).catch(function(err) { setBottom(err.message, 'bad'); });
     });

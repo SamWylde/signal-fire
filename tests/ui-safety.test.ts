@@ -4,13 +4,19 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { readLedger } from '../src/core/ledger.js';
 import { readMetadata } from '../src/core/session.js';
+import { REDESIGNED_APP_HTML } from '../src/ui/app-html.js';
 import {
   buildLaunchOptions,
+  buildManualCampaignInput,
   deleteAccount,
+  getUiPortCandidates,
+  isRetryableListenError,
   parseCampaignDelayMs,
   parseCampaignDelayRangeMs,
   resolveSpoofFingerprintForLaunch,
+  setManualVerifyDriverForTests,
   shouldStopCampaignAfterError,
   startUiServer,
 } from '../src/ui/server.js';
@@ -50,7 +56,7 @@ describe('deleteAccount', () => {
 
   afterEach(async () => {
     if (originalHome === undefined) {
-      process.env.SIGNAL_FIRE_HOME = undefined;
+      Reflect.deleteProperty(process.env, 'SIGNAL_FIRE_HOME');
     } else {
       process.env.SIGNAL_FIRE_HOME = originalHome;
     }
@@ -186,7 +192,7 @@ describe('manual session verification', () => {
 
   afterEach(async () => {
     if (originalHome === undefined) {
-      process.env.SIGNAL_FIRE_HOME = undefined;
+      Reflect.deleteProperty(process.env, 'SIGNAL_FIRE_HOME');
     } else {
       process.env.SIGNAL_FIRE_HOME = originalHome;
     }
@@ -219,6 +225,185 @@ describe('manual session verification', () => {
   });
 });
 
+describe('manual campaign verification', () => {
+  let tmpDir: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sf-test-'));
+    originalHome = process.env.SIGNAL_FIRE_HOME;
+    process.env.SIGNAL_FIRE_HOME = tmpDir;
+    setManualVerifyDriverForTests(null);
+  });
+
+  afterEach(async () => {
+    setManualVerifyDriverForTests(null);
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, 'SIGNAL_FIRE_HOME');
+    } else {
+      process.env.SIGNAL_FIRE_HOME = originalHome;
+    }
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function campaignForm(targets: string[]): FormData {
+    const form = new FormData();
+    form.set('account', 'main');
+    form.set('text', 'Manual verify post');
+    form.set('pageUrl', 'https://www.facebook.com/example');
+    form.set('linkedinTarget', 'profile');
+    form.set('campaignDelayMinSeconds', '0');
+    form.set('campaignDelayMaxSeconds', '0');
+    for (const target of targets) form.append('targets', target);
+    return form;
+  }
+
+  it('forces dryRun on manual campaign inputs for the verified platforms', () => {
+    const form = campaignForm(['x']);
+    const assets = { imagePath: 'C:\\tmp\\image.jpg' };
+
+    for (const platform of ['x', 'facebook', 'linkedin', 'instagram'] as const) {
+      const input = buildManualCampaignInput(platform, form, assets) as { dryRun?: boolean };
+      expect(input.dryRun).toBe(true);
+    }
+  });
+
+  it('rejects unsupported manual targets before launching a browser', async () => {
+    let launched = false;
+    setManualVerifyDriverForTests({
+      launch: async () => {
+        launched = true;
+        throw new Error('should not launch');
+      },
+      isLoggedIn: async () => true,
+      compose: async () => undefined,
+      markValidated: async () => undefined,
+    });
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/campaign/manual`, {
+        method: 'POST',
+        body: campaignForm(['tiktok']),
+      });
+      const body = (await response.json()) as { error?: string };
+
+      expect(response.status).toBe(400);
+      expect(body.error).toMatch(/Manual verify currently supports/i);
+      expect(launched).toBe(false);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('prepares selected platforms with one shared context and blocks automatic posting until closed', async () => {
+    const pages: object[] = [{}];
+    const closeHandlers: Array<() => void> = [];
+    const composed: Array<{ platform: string; input: { dryRun?: boolean } }> = [];
+    let launchCount = 0;
+    let closeCount = 0;
+
+    setManualVerifyDriverForTests({
+      launch: async () => {
+        launchCount++;
+        return {
+          context: {
+            pages: () => pages,
+            newPage: async () => {
+              const page = {};
+              pages.push(page);
+              return page;
+            },
+            on: (event: string, callback: () => void) => {
+              if (event === 'close') closeHandlers.push(callback);
+              return undefined;
+            },
+          } as never,
+          close: async () => {
+            closeCount++;
+            for (const handler of closeHandlers) handler();
+          },
+        };
+      },
+      isLoggedIn: async () => true,
+      compose: async (platform, _page, input) => {
+        composed.push({ platform, input: input as { dryRun?: boolean } });
+      },
+      markValidated: async () => undefined,
+    });
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/campaign/manual`, {
+        method: 'POST',
+        body: campaignForm(['x', 'facebook']),
+      });
+      const body = (await response.json()) as {
+        campaignOk?: boolean;
+        results?: Array<{ status?: string; detail?: string }>;
+      };
+
+      expect(response.status).toBe(200);
+      expect(body.campaignOk).toBe(true);
+      expect(body.results?.map((result) => result.status)).toEqual(['prepared', 'prepared']);
+      expect(launchCount).toBe(1);
+      expect(pages).toHaveLength(2);
+      expect(composed.map((entry) => [entry.platform, entry.input.dryRun])).toEqual([
+        ['x', true],
+        ['facebook', true],
+      ]);
+      await expect(readLedger('x', 'main')).resolves.toEqual([]);
+
+      const automaticResponse = await fetch(`${handle.url}/api/campaign`, {
+        method: 'POST',
+        body: campaignForm(['x']),
+      });
+      const automaticBody = (await automaticResponse.json()) as { error?: string };
+
+      expect(automaticResponse.status).toBe(400);
+      expect(automaticBody.error).toMatch(/Manual verification browser is open/i);
+
+      const historyResponse = await fetch(`${handle.url}/api/history?account=main`);
+      const historyBody = (await historyResponse.json()) as {
+        entries?: Array<{ status?: string; detail?: string }>;
+      };
+      expect(historyBody.entries?.map((entry) => entry.status)).toEqual(['prepared', 'prepared']);
+    } finally {
+      await handle.close();
+      expect(closeCount).toBe(1);
+    }
+  });
+
+  it('exposes manual UI controls and guards live posting', () => {
+    expect(REDESIGNED_APP_HTML).toContain('id="manualVerifyTop"');
+    expect(REDESIGNED_APP_HTML).toContain('/api/campaign/manual');
+    expect(REDESIGNED_APP_HTML).toContain('window.confirm');
+    expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
+    expect(REDESIGNED_APP_HTML).not.toContain('Ready check');
+  });
+});
+
+describe('UI server startup', () => {
+  it('searches past broad Windows reserved port ranges before falling back to an OS port', () => {
+    const candidates = getUiPortCandidates(4317);
+
+    expect(candidates).toContain(4360);
+    expect(candidates.at(-1)).toBe(0);
+  });
+
+  it('retries occupied or permission-denied local ports', () => {
+    expect(isRetryableListenError(Object.assign(new Error('in use'), { code: 'EADDRINUSE' }))).toBe(
+      true,
+    );
+    expect(isRetryableListenError(Object.assign(new Error('denied'), { code: 'EACCES' }))).toBe(
+      true,
+    );
+    expect(
+      isRetryableListenError(Object.assign(new Error('bad host'), { code: 'EADDRNOTAVAIL' })),
+    ).toBe(false);
+  });
+});
+
 describe('spoof fingerprint launch setting', () => {
   let tmpDir: string;
   let originalHome: string | undefined;
@@ -231,7 +416,7 @@ describe('spoof fingerprint launch setting', () => {
 
   afterEach(async () => {
     if (originalHome === undefined) {
-      process.env.SIGNAL_FIRE_HOME = undefined;
+      Reflect.deleteProperty(process.env, 'SIGNAL_FIRE_HOME');
     } else {
       process.env.SIGNAL_FIRE_HOME = originalHome;
     }
