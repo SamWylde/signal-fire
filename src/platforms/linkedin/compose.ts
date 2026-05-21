@@ -262,14 +262,22 @@ async function createPostViaDirectUrl(
 
     if (input.imagePath !== undefined) {
       logLinkedIn(input, 'Adding image to LinkedIn company-share post');
+      const addMediaBtn = page.locator(LINKEDIN.selectors.companyShare.addMediaButton).first();
       try {
-        await humanClick(page, page.locator(LINKEDIN.selectors.companyShare.addMediaButton).first());
+        const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 5000 });
+        await humanClick(page, addMediaBtn);
+        const fileChooser = await fileChooserPromise;
+        await fileChooser.setFiles(input.imagePath);
       } catch {
-        throw new Error('Could not find company-share media button - selectors may be stale');
+        // Fallback: chooser event didn't fire, try setInputFiles on the hidden input
+        try {
+          await humanClick(page, addMediaBtn);
+        } catch {
+          throw new Error('Could not find company-share media button - selectors may be stale');
+        }
+        const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
+        await fileInput.setInputFiles(input.imagePath);
       }
-
-      const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
-      await fileInput.setInputFiles(input.imagePath);
 
       await page
         .locator(LINKEDIN.selectors.composer.imagePreview)
@@ -497,14 +505,22 @@ export async function createPost(
 
   if (resolvedInput.imagePath !== undefined) {
     logLinkedIn(resolvedInput, 'Adding image to LinkedIn post');
+    const addMediaBtn = page.locator(LINKEDIN.selectors.composer.imageButtonAria).first();
     try {
-      await humanClick(page, page.locator(LINKEDIN.selectors.composer.imageButtonAria).first());
+      const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 5000 });
+      await humanClick(page, addMediaBtn);
+      const fileChooser = await fileChooserPromise;
+      await fileChooser.setFiles(resolvedInput.imagePath);
     } catch {
-      throw new Error('Could not find image attach button - selectors may be stale');
+      // Fallback: chooser event didn't fire, try setInputFiles on the hidden input
+      try {
+        await humanClick(page, addMediaBtn);
+      } catch {
+        throw new Error('Could not find image attach button - selectors may be stale');
+      }
+      const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
+      await fileInput.setInputFiles(resolvedInput.imagePath);
     }
-
-    const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
-    await fileInput.setInputFiles(resolvedInput.imagePath);
 
     await page
       .locator(LINKEDIN.selectors.composer.imagePreview)
