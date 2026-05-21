@@ -382,6 +382,51 @@ describe('manual campaign verification', () => {
     }
   });
 
+  it('uses saved draft image paths when the file input is empty after reopening', async () => {
+    const uploadDir = path.join(tmpDir, 'uploads', 'draft-image');
+    const imagePath = path.join(uploadDir, 'logo.png');
+    await fs.mkdir(uploadDir, { recursive: true });
+    await fs.writeFile(imagePath, 'fake-image');
+
+    const composed: Array<{ platform: string; input: { dryRun?: boolean; imagePath?: string } }> =
+      [];
+    setManualVerifyDriverForTests({
+      launch: async () => ({
+        context: {
+          pages: () => [{}],
+          newPage: async () => ({}),
+          on: () => undefined,
+        } as never,
+        close: async () => undefined,
+      }),
+      isLoggedIn: async () => true,
+      compose: async (platform, _page, input) => {
+        composed.push({ platform, input: input as { dryRun?: boolean; imagePath?: string } });
+      },
+      markValidated: async () => undefined,
+    });
+
+    const form = campaignForm(['instagram']);
+    form.set('savedImagePath', imagePath);
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/campaign/manual`, {
+        method: 'POST',
+        body: form,
+      });
+      const body = (await response.json()) as { campaignOk?: boolean };
+
+      expect(response.status).toBe(200);
+      expect(body.campaignOk).toBe(true);
+      expect(composed).toHaveLength(1);
+      expect(composed[0]?.platform).toBe('instagram');
+      expect(composed[0]?.input).toMatchObject({ imagePath, dryRun: true });
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('records debug artifact paths when manual preparation fails', async () => {
     const page = {
       url: () => 'https://x.com/compose/post',
@@ -450,7 +495,22 @@ describe('manual campaign verification', () => {
     );
     expect(REDESIGNED_APP_HTML).toContain('window.confirm');
     expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
+    expect(REDESIGNED_APP_HTML).toContain('data-linkedin-company-id-row');
+    expect(REDESIGNED_APP_HTML).toContain('draftFiles');
+    expect(REDESIGNED_APP_HTML).toContain('/api/draft-file');
+    expect(REDESIGNED_APP_HTML).not.toContain('Dry run (test without');
     expect(REDESIGNED_APP_HTML).not.toContain('Ready check');
+  });
+
+  it('ships a syntactically valid inline UI script', () => {
+    const scriptStart = REDESIGNED_APP_HTML.indexOf('<script>');
+    const scriptEnd = REDESIGNED_APP_HTML.lastIndexOf('</script>');
+
+    expect(scriptStart).toBeGreaterThanOrEqual(0);
+    expect(scriptEnd).toBeGreaterThan(scriptStart);
+    expect(
+      () => new Function(REDESIGNED_APP_HTML.slice(scriptStart + '<script>'.length, scriptEnd)),
+    ).not.toThrow();
   });
 });
 

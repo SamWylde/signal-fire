@@ -74,9 +74,18 @@ interface UiState {
   activePlatform?: PostingPlatform;
   targets?: PostingPlatform[];
   fields?: Record<string, string | boolean>;
+  draftFiles?: Record<string, DraftFileRef>;
   overrideText?: Partial<Record<PostingPlatform, string>>;
   overrideEnabled?: Partial<Record<PostingPlatform, boolean>>;
   updatedAt?: string;
+}
+
+interface DraftFileRef {
+  path: string;
+  name: string;
+  type?: string;
+  size?: number;
+  updatedAt: string;
 }
 
 export interface CampaignAssets {
@@ -349,6 +358,10 @@ function getDebugArtifactDir(): string {
   return path.join(getRoot(), 'ui', 'debug');
 }
 
+function getUploadRoot(): string {
+  return path.join(getRoot(), 'uploads');
+}
+
 function getQueuePath(): string {
   return path.join(getRoot(), 'ui', 'queue.json');
 }
@@ -373,6 +386,17 @@ function sendHtml(res: ServerResponse, body: string): void {
     'content-length': Buffer.byteLength(body),
   });
   res.end(body);
+}
+
+function contentTypeForPath(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  if (ext === '.gif') return 'image/gif';
+  if (ext === '.mp4') return 'video/mp4';
+  if (ext === '.mov') return 'video/quicktime';
+  return 'application/octet-stream';
 }
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -445,8 +469,8 @@ function isUploadedFile(value: FormDataEntryValue): value is File {
 
 async function saveUploadedFile(file: File, bucket: string): Promise<string | undefined> {
   if (file.size === 0 || file.name.length === 0) return undefined;
-  const root = await ensureSignalFireDir();
-  const uploadDir = path.join(root, 'uploads', bucket);
+  await ensureSignalFireDir();
+  const uploadDir = path.join(getUploadRoot(), bucket);
   await fs.mkdir(uploadDir, { recursive: true });
 
   const filePath = path.join(
@@ -457,13 +481,42 @@ async function saveUploadedFile(file: File, bucket: string): Promise<string | un
   return filePath;
 }
 
-async function requireFile(form: FormData, key: string, bucket: string): Promise<string> {
-  const value = form.get(key);
-  if (value === null || !isUploadedFile(value)) {
-    throw new Error(`${key} file is required`);
+function savedPathFieldName(key: string): string {
+  return `saved${key.charAt(0).toUpperCase()}${key.slice(1)}Path`;
+}
+
+function isPathInside(parent: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative.length === 0 || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+async function savedFilePath(form: FormData, key: string): Promise<string | undefined> {
+  const rawPath = formString(form, savedPathFieldName(key));
+  if (rawPath === undefined) return undefined;
+
+  const resolvedPath = path.resolve(rawPath);
+  if (!isPathInside(getUploadRoot(), resolvedPath)) {
+    throw new Error(`${key} saved file path is outside the signal-fire uploads folder`);
   }
 
-  const saved = await saveUploadedFile(value, bucket);
+  const stat = await fs.stat(resolvedPath).catch(() => undefined);
+  if (stat === undefined || !stat.isFile()) {
+    throw new Error(`${key} saved file is missing; choose the file again`);
+  }
+
+  return resolvedPath;
+}
+
+async function optionalFileOrSaved(
+  form: FormData,
+  key: string,
+  bucket: string,
+): Promise<string | undefined> {
+  return (await optionalFile(form, key, bucket)) ?? (await savedFilePath(form, key));
+}
+
+async function requireFile(form: FormData, key: string, bucket: string): Promise<string> {
+  const saved = await optionalFileOrSaved(form, key, bucket);
   if (saved === undefined) throw new Error(`${key} file is required`);
   return saved;
 }
@@ -488,6 +541,26 @@ async function optionalFiles(form: FormData, key: string, bucket: string): Promi
   return saved;
 }
 
+async function saveDraftFile(form: FormData): Promise<DraftFileRef> {
+  const kind = formString(form, 'kind');
+  if (kind === undefined || !['image', 'video', 'cover', 'thumbnail'].includes(kind)) {
+    throw new Error('Draft file kind is required');
+  }
+
+  const value = form.get('file');
+  if (value === null || !isUploadedFile(value)) throw new Error('Draft file is required');
+  const filePath = await saveUploadedFile(value, `draft-${kind}`);
+  if (filePath === undefined) throw new Error('Draft file is required');
+
+  return {
+    path: filePath,
+    name: sanitizeFileName(value.name),
+    ...(value.type.length > 0 && { type: value.type }),
+    size: value.size,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 function defaultUiState(): UiState {
   return {
     account: 'main',
@@ -508,8 +581,6 @@ function defaultUiState(): UiState {
       linkedinCompanyId: '',
       linkedinTitle: '',
       linkedinShareIntro: '',
-      linkedinDryRun: false,
-      instagramDryRun: false,
       tiktokVisibility: 'everyone',
       youtubeVisibility: 'private',
       allowComments: true,
@@ -518,6 +589,7 @@ function defaultUiState(): UiState {
       useBrowserProfile: true,
       spoofFingerprint: false,
     },
+    draftFiles: {},
     overrideText: {},
     overrideEnabled: {},
   };
@@ -535,6 +607,10 @@ function mergeUiState(saved: UiState): UiState {
     fields: {
       ...(defaults.fields ?? {}),
       ...(saved.fields ?? {}),
+    },
+    draftFiles: {
+      ...(defaults.draftFiles ?? {}),
+      ...(saved.draftFiles ?? {}),
     },
     overrideText: {
       ...(defaults.overrideText ?? {}),
@@ -1024,7 +1100,7 @@ async function buildPostInput(
       const videoPath = await requireFile(form, 'video', platform);
       const description = formString(form, 'description');
       if (description === undefined) throw new Error('Description is required');
-      const coverPath = await optionalFile(form, 'cover', platform);
+      const coverPath = await optionalFileOrSaved(form, 'cover', platform);
       const productId = formString(form, 'productId');
       const visibility = formString(form, 'visibility');
       const schedule =
@@ -1061,7 +1137,7 @@ async function buildPostInput(
       const text = formString(form, 'text');
       if (pageUrl === undefined) throw new Error('Facebook page URL is required');
       if (text === undefined) throw new Error('Text is required');
-      const imagePath = await optionalFile(form, 'image', platform);
+      const imagePath = await optionalFileOrSaved(form, 'image', platform);
       const facebookPostAsRaw = formString(form, 'facebookPostAs');
       let postAs: 'personal' | 'page' = facebookPostAsRaw === 'page' ? 'page' : 'personal';
       const facebookPageName = formString(form, 'facebookPageName');
@@ -1088,7 +1164,7 @@ async function buildPostInput(
     case 'linkedin': {
       const text = formString(form, 'text');
       if (text === undefined) throw new Error('Text is required');
-      const imagePath = await optionalFile(form, 'image', platform);
+      const imagePath = await optionalFileOrSaved(form, 'image', platform);
       const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
       const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
       const linkedinCompanyId = formString(form, 'linkedinCompanyId') || undefined;
@@ -1113,7 +1189,7 @@ async function buildPostInput(
       const videoPath = await requireFile(form, 'video', platform);
       const title = formString(form, 'title');
       if (title === undefined) throw new Error('Title is required');
-      const thumbnailPath = await optionalFile(form, 'thumbnail', platform);
+      const thumbnailPath = await optionalFileOrSaved(form, 'thumbnail', platform);
       const description = formString(form, 'description');
       const tagsRaw = formString(form, 'tags');
       const playlist = formString(form, 'playlist');
@@ -1553,10 +1629,10 @@ function getManualVerifyDriver(): ManualVerifyDriver {
 
 async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
   const bucket = `campaign-${Date.now()}-${randomUUID().slice(0, 8)}`;
-  const imagePath = await optionalFile(form, 'image', bucket);
-  const videoPath = await optionalFile(form, 'video', bucket);
-  const coverPath = await optionalFile(form, 'cover', bucket);
-  const thumbnailPath = await optionalFile(form, 'thumbnail', bucket);
+  const imagePath = await optionalFileOrSaved(form, 'image', bucket);
+  const videoPath = await optionalFileOrSaved(form, 'video', bucket);
+  const coverPath = await optionalFileOrSaved(form, 'cover', bucket);
+  const thumbnailPath = await optionalFileOrSaved(form, 'thumbnail', bucket);
   return {
     ...(imagePath !== undefined && { imagePath }),
     ...(videoPath !== undefined && { videoPath }),
@@ -2355,6 +2431,27 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.method === 'POST' && url.pathname === '/api/state') {
     await saveUiState(await readJson<UiState>(req));
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/draft-file') {
+    const file = await saveDraftFile(await readForm(req));
+    sendJson(res, 200, { ok: true, file });
+    return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/draft-file') {
+    const rawPath = url.searchParams.get('path') ?? '';
+    const resolvedPath = path.resolve(rawPath);
+    if (!isPathInside(getUploadRoot(), resolvedPath)) {
+      throw new Error('Draft file path is outside the signal-fire uploads folder');
+    }
+    const data = await fs.readFile(resolvedPath);
+    res.writeHead(200, {
+      'content-type': contentTypeForPath(resolvedPath),
+      'content-length': data.byteLength,
+    });
+    res.end(data);
     return;
   }
 
