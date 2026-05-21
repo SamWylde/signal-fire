@@ -206,19 +206,7 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     // Toggle not present — continue
   }
 
-  // --- Step 7: Click "Select from computer" (if shown) ---
-  // Newer IG flows skip this and go straight to the hidden file input.
-  try {
-    const selectBtn = page.locator(INSTAGRAM.selectors.composer.selectFromComputerButton).first();
-    const selectVisible = await isLocatorVisible(selectBtn, shortMs);
-    if (selectVisible) {
-      await humanClick(page, selectBtn);
-    }
-  } catch {
-    // Button not present — continue
-  }
-
-  // --- Step 8: Upload file ---
+  // --- Step 7: Upload file ---
   // Primary: verified Stage 1 file input scoped to the Create new post modal (2026-05-20)
   await setFirstAttachedFileInput(
     [
