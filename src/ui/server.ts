@@ -1109,8 +1109,10 @@ async function buildPostInput(
   const wordPause = wordPauseMaxMs(form);
   switch (platform) {
     case 'tiktok': {
-      const videoPath = await requireFile(form, 'video', platform);
-      const description = formString(form, 'description');
+      const tiktokVideoPath = await optionalFileOrSaved(form, 'tiktokVideo', platform);
+      const videoPath = tiktokVideoPath ?? (await requireFile(form, 'video', platform));
+      const description =
+        formString(form, 'tiktokText') ?? formString(form, 'text') ?? formString(form, 'description');
       if (description === undefined) throw new Error('Description is required');
       const coverPath = await optionalFileOrSaved(form, 'cover', platform);
       const productId = formString(form, 'productId');
@@ -1132,7 +1134,7 @@ async function buildPostInput(
       };
     }
     case 'x': {
-      const text = formString(form, 'text');
+      const text = formString(form, 'xText') ?? formString(form, 'text');
       if (text === undefined) throw new Error('Text is required');
       const mediaPaths = await optionalFiles(form, 'media', platform);
       const communityName = formString(form, 'communityName');
@@ -1148,10 +1150,13 @@ async function buildPostInput(
     }
     case 'facebook': {
       const pageUrl = formString(form, 'pageUrl');
-      const text = formString(form, 'text');
+      const text = formString(form, 'facebookText') ?? formString(form, 'text');
       if (pageUrl === undefined) throw new Error('Facebook page URL is required');
       if (text === undefined) throw new Error('Text is required');
-      const imagePath = await optionalFileOrSaved(form, 'image', platform);
+      const facebookImagePath = await optionalFileOrSaved(form, 'facebookImage', platform);
+      const imagePath = facebookImagePath ?? (await optionalFileOrSaved(form, 'image', platform));
+      const facebookVideoPath = await optionalFileOrSaved(form, 'facebookVideo', platform);
+      const videoPath = facebookVideoPath ?? (await optionalFileOrSaved(form, 'video', platform));
       const facebookPostAsRaw = formString(form, 'facebookPostAs');
       let postAs: 'personal' | 'page' = facebookPostAsRaw === 'page' ? 'page' : 'personal';
       const facebookPageName = formString(form, 'facebookPageName');
@@ -1170,15 +1175,17 @@ async function buildPostInput(
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
         ...(imagePath !== undefined && { imagePath }),
+        ...(videoPath !== undefined && { videoPath }),
         postAs,
         ...(facebookPageName !== undefined &&
           facebookPageName.trim().length > 0 && { facebookPageName: facebookPageName.trim() }),
       };
     }
     case 'linkedin': {
-      const text = formString(form, 'text');
+      const text = formString(form, 'linkedinText') ?? formString(form, 'text');
       if (text === undefined) throw new Error('Text is required');
-      const imagePath = await optionalFileOrSaved(form, 'image', platform);
+      const linkedinImagePath = await optionalFileOrSaved(form, 'linkedinImage', platform);
+      const imagePath = linkedinImagePath ?? (await optionalFileOrSaved(form, 'image', platform));
       const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
       const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
       const linkedinCompanyId = formString(form, 'linkedinCompanyId') || undefined;
@@ -1200,11 +1207,12 @@ async function buildPostInput(
       };
     }
     case 'youtube': {
-      const videoPath = await requireFile(form, 'video', platform);
-      const title = formString(form, 'title');
+      const youtubeVideoPath = await optionalFileOrSaved(form, 'youtubeVideo', platform);
+      const videoPath = youtubeVideoPath ?? (await requireFile(form, 'video', platform));
+      const title = formString(form, 'youtubeBaseTitle') ?? formString(form, 'title');
       if (title === undefined) throw new Error('Title is required');
       const thumbnailPath = await optionalFileOrSaved(form, 'thumbnail', platform);
-      const description = formString(form, 'description');
+      const description = formString(form, 'youtubeText') ?? formString(form, 'description');
       const tagsRaw = formString(form, 'tags');
       const playlist = formString(form, 'playlist');
       const visibility = formString(form, 'visibility');
@@ -1232,13 +1240,17 @@ async function buildPostInput(
       };
     }
     case 'instagram': {
-      const imagePath = await requireFile(form, 'image', platform);
-      const caption = formString(form, 'caption');
+      const instagramImagePath = await optionalFileOrSaved(form, 'instagramImage', platform);
+      const imagePath = instagramImagePath ?? (await requireFile(form, 'image', platform));
+      const instagramVideoPath = await optionalFileOrSaved(form, 'instagramVideo', platform);
+      const videoPath = instagramVideoPath ?? (await optionalFileOrSaved(form, 'video', platform));
+      const caption = formString(form, 'instagramText') ?? formString(form, 'caption');
       return {
         imagePath,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
         ...(caption !== undefined && { caption }),
+        ...(videoPath !== undefined && { videoPath }),
       };
     }
   }
@@ -1466,11 +1478,14 @@ function buildCampaignInput(
   switch (platform) {
     case 'tiktok': {
       if (assets.videoPath === undefined) throw new Error('Video is required for TikTok');
-      if (description === undefined) throw new Error('Text or description is required for TikTok');
+      const tiktokDescription =
+        formString(form, 'tiktokText') ?? formString(form, 'text') ?? description;
+      if (tiktokDescription === undefined)
+        throw new Error('Text or description is required for TikTok');
       const productId = formString(form, 'productId');
       return {
         videoPath: assets.videoPath,
-        description,
+        description: tiktokDescription,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
         ...(assets.coverPath !== undefined && { coverPath: assets.coverPath }),
@@ -1483,14 +1498,15 @@ function buildCampaignInput(
       };
     }
     case 'x': {
-      if (text === undefined) throw new Error('Text is required for X');
+      const xText = formString(form, 'xText') ?? text;
+      if (xText === undefined) throw new Error('Text is required for X');
       const mediaPaths = [assets.videoPath, assets.imagePath].filter(
         (item): item is string => item !== undefined,
       );
       const communityName = formString(form, 'communityName');
       const communityId = formString(form, 'communityId');
       return {
-        text,
+        text: xText,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
         ...(mediaPaths.length > 0 && { mediaPaths }),
@@ -1499,9 +1515,10 @@ function buildCampaignInput(
       };
     }
     case 'facebook': {
+      const facebookText = formString(form, 'facebookText') ?? text;
       const pageUrl = formString(form, 'pageUrl');
       if (pageUrl === undefined) throw new Error('Facebook page URL is required');
-      if (text === undefined) throw new Error('Text is required for Facebook');
+      if (facebookText === undefined) throw new Error('Text is required for Facebook');
       const facebookPostAsRaw = formString(form, 'facebookPostAs');
       let postAs: 'personal' | 'page' = facebookPostAsRaw === 'page' ? 'page' : 'personal';
       const facebookPageName = formString(form, 'facebookPageName');
@@ -1516,7 +1533,7 @@ function buildCampaignInput(
       }
       return {
         pageUrl,
-        text,
+        text: facebookText,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
         ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
@@ -1526,7 +1543,8 @@ function buildCampaignInput(
       };
     }
     case 'linkedin': {
-      if (text === undefined) throw new Error('Text is required for LinkedIn');
+      const linkedinText = formString(form, 'linkedinText') ?? text;
+      if (linkedinText === undefined) throw new Error('Text is required for LinkedIn');
       const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
       const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
       const linkedinCompanyId = formString(form, 'linkedinCompanyId') || undefined;
@@ -1538,7 +1556,7 @@ function buildCampaignInput(
       const linkedinTitle = formString(form, 'linkedinTitle');
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
       return {
-        text,
+        text: linkedinText,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
         ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
@@ -1551,16 +1569,18 @@ function buildCampaignInput(
       };
     }
     case 'youtube': {
+      const youtubeTitle = formString(form, 'youtubeBaseTitle') ?? title;
+      const youtubeDescription = formString(form, 'youtubeText') ?? description;
       if (assets.videoPath === undefined) throw new Error('Video is required for YouTube');
-      if (title === undefined) throw new Error('Title is required for YouTube');
+      if (youtubeTitle === undefined) throw new Error('Title is required for YouTube');
       const tags = campaignTags(form);
       const playlist = formString(form, 'playlist');
       return {
         videoPath: assets.videoPath,
-        title,
+        title: youtubeTitle,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
-        ...(description !== undefined && { description }),
+        ...(youtubeDescription !== undefined && { description: youtubeDescription }),
         ...(assets.thumbnailPath !== undefined && { thumbnailPath: assets.thumbnailPath }),
         ...(tags.length > 0 && { tags }),
         ...(playlist !== undefined && { playlist }),
@@ -1570,12 +1590,13 @@ function buildCampaignInput(
       };
     }
     case 'instagram': {
+      const instagramCaption = formString(form, 'instagramText') ?? text;
       if (assets.imagePath === undefined) throw new Error('Image is required for Instagram');
       return {
         imagePath: assets.imagePath,
         typingSpeedMultiplier: typingSpeed,
         wordPauseMaxMs: wordPause,
-        ...(text !== undefined && { caption: text }),
+        ...(instagramCaption !== undefined && { caption: instagramCaption }),
       };
     }
   }
