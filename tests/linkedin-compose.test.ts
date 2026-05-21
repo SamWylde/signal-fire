@@ -40,7 +40,7 @@ describe('getCompanyPageCandidateUrls', () => {
       '110105724',
     );
     expect(extractLinkedInCompanyIdFromUrl('https://www.linkedin.com/company/grantcue/')).toBe(
-      undefined,
+      'grantcue',
     );
   });
 });
