@@ -260,6 +260,39 @@ async function createPostViaDirectUrl(
       editorLocator = page.locator(LINKEDIN.selectors.composer.textEditorAria).first();
     }
 
+    if (input.imagePath !== undefined) {
+      logLinkedIn(input, 'Adding image to LinkedIn company-share post');
+      try {
+        await humanClick(page, page.locator(LINKEDIN.selectors.companyShare.addMediaButton).first());
+      } catch {
+        throw new Error('Could not find company-share media button - selectors may be stale');
+      }
+
+      const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
+      await fileInput.setInputFiles(input.imagePath);
+
+      await page
+        .locator(LINKEDIN.selectors.composer.imagePreview)
+        .waitFor({ state: 'visible', timeout: mediumMs })
+        .catch(() => {
+          // Preview may not appear immediately; continue.
+        });
+
+      await jitterSleep(2500, 0.4);
+
+      try {
+        await humanClick(page, page.getByRole('button', { name: 'Next' }));
+      } catch {
+        // Not present.
+      }
+
+      try {
+        await humanClick(page, page.getByRole('button', { name: 'Done' }));
+      } catch {
+        // Not present.
+      }
+    }
+
     logLinkedIn(input, 'Typing LinkedIn post text');
     await humanClick(page, editorLocator);
     await humanType(editorLocator, clampedText, typingOptions(input));
@@ -462,11 +495,8 @@ export async function createPost(
     editorLocator = page.locator(LINKEDIN.selectors.composer.textEditor).first();
   }
 
-  logLinkedIn(resolvedInput, 'Typing LinkedIn composer text');
-  await humanClick(page, editorLocator);
-  await humanType(editorLocator, clampedText, typingOptions(input));
-
   if (resolvedInput.imagePath !== undefined) {
+    logLinkedIn(resolvedInput, 'Adding image to LinkedIn post');
     try {
       await humanClick(page, page.locator(LINKEDIN.selectors.composer.imageButtonAria).first());
     } catch {
@@ -496,7 +526,18 @@ export async function createPost(
     } catch {
       // Not present.
     }
+
+    // Re-query editor: LinkedIn may re-render the composer after media is attached.
+    editorLocator = page.locator(LINKEDIN.selectors.composer.textEditorAria).first();
+    const editorVisibleAfterMedia = await isLocatorVisible(editorLocator, shortMs);
+    if (!editorVisibleAfterMedia) {
+      editorLocator = page.locator(LINKEDIN.selectors.composer.textEditor).first();
+    }
   }
+
+  logLinkedIn(resolvedInput, 'Typing LinkedIn composer text');
+  await humanClick(page, editorLocator);
+  await humanType(editorLocator, clampedText, typingOptions(input));
 
   await page.waitForFunction(
     (selectors: string[]) => {
