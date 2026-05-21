@@ -799,18 +799,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <label data-platform-detail="youtube">Playlist
                     <input name="playlist" data-save="playlist">
                   </label>
-                  <div class="override-section">
-                    <div class="eyebrow">Caption</div>
-                    <label class="check-row" style="font-size:12.5px;text-transform:none;letter-spacing:0;font-weight:700"><input type="checkbox" id="overrideCaptionCheckbox"> Override base caption</label>
-                    <div id="overrideCaptionPreview" class="override-preview"></div>
-                    <div id="overrideCaptionInputWrap" hidden>
-                      <textarea id="overrideCaptionInput" class="compact" placeholder="Enter platform-specific caption..."></textarea>
-                      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:4px">
-                        <span id="overrideCaptionWarn" class="caption-warn" hidden></span>
-                        <span id="overrideCaptionCount" class="caption-count" style="margin-left:auto"></span>
-                      </div>
-                    </div>
-                  </div>
                 </div>
               </div>
 
@@ -1113,8 +1101,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       instagram: '#e1306c'
     };
     var CAPTION_LIMITS = { x: 280, instagram: 2200, tiktok: 2200, linkedin: 3000, youtube: 5000, facebook: 63206 };
-    var overrideText = {};
-    var overrideEnabled = {};
     var activeFlowId = null;
     var saveTimer = null;
     var selectedDetailPlatform = 'facebook';
@@ -1396,9 +1382,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         activePlatform: currentPlatform(),
         targets: selectedTargets(),
         fields: fields,
-        draftFiles: draftFiles,
-        overrideText: overrideText,
-        overrideEnabled: overrideEnabled
+        draftFiles: draftFiles
       };
     }
 
@@ -1431,10 +1415,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         });
         if (state.targets.length > 0) selectedDetailPlatform = state.targets[0];
       }
-      if (state.overrideText && typeof state.overrideText === 'object') overrideText = state.overrideText;
-      if (state.overrideEnabled && typeof state.overrideEnabled === 'object') overrideEnabled = state.overrideEnabled;
       if (state.draftFiles && typeof state.draftFiles === 'object') draftFiles = state.draftFiles;
-      updateOvrBadges();
       if (state.fields) {
         if ('useBrowserProfile' in state.fields) useProfileEl.checked = true; // legacy state may have false; checkbox is disabled and feature is always-on
         document.querySelectorAll('[data-save]').forEach(function(input) {
@@ -1600,7 +1581,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       });
       var labelEl = document.getElementById('detailPlatformLabel');
       if (labelEl) labelEl.textContent = platformNames[selected] || selected;
-      updateOverrideSection(selected);
       updateLinkedInArticleFields();
       updateLinkedInCompanyIdField();
       updateFacebookPageFields();
@@ -1653,77 +1633,20 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       saveStateSoon();
     }
 
-    function updateOvrBadges() {
-      document.querySelectorAll('[data-ovr-badge]').forEach(function(badge) {
-        badge.hidden = !overrideEnabled[badge.dataset.ovrBadge];
-      });
-    }
-
     function updateBaseCaptionCount(text) {
       var countEl = document.getElementById('baseCaptionCount');
       if (!countEl) return;
       var targets = selectedTargets();
-      var nonOverridden = targets.filter(function(p) { return !overrideEnabled[p]; });
-      if (nonOverridden.length === 0) {
+      if (targets.length === 0) {
         countEl.textContent = '';
         countEl.className = 'caption-count';
         return;
       }
-      var limits = nonOverridden.map(function(p) { return CAPTION_LIMITS[p] || Infinity; });
+      var limits = targets.map(function(p) { return CAPTION_LIMITS[p] || Infinity; });
       var minLimit = Math.min.apply(null, limits);
       var len = (text || '').length;
       countEl.textContent = len + ' / ' + minLimit;
       countEl.className = 'caption-count' + (len > minLimit ? ' over' : '');
-    }
-
-    function updateOverrideSection(platform) {
-      var checkbox = document.getElementById('overrideCaptionCheckbox');
-      var preview = document.getElementById('overrideCaptionPreview');
-      var inputWrap = document.getElementById('overrideCaptionInputWrap');
-      var input = document.getElementById('overrideCaptionInput');
-      var countEl = document.getElementById('overrideCaptionCount');
-      var warnEl = document.getElementById('overrideCaptionWarn');
-      if (!checkbox || !preview || !inputWrap || !input || !countEl || !warnEl) return;
-
-      var enabled = !!overrideEnabled[platform];
-      checkbox.checked = enabled;
-
-      if (enabled) {
-        preview.hidden = true;
-        inputWrap.hidden = false;
-        input.value = overrideText[platform] || '';
-        updateOverrideCaptionCount(platform, input.value);
-      } else {
-        var baseText = document.getElementById('textInput').value || '';
-        var charCount = baseText.length;
-        preview.hidden = false;
-        preview.textContent = baseText.length > 0
-          ? 'Will use base caption (' + charCount + ' chars)'
-          : 'Will use base caption (empty)';
-        inputWrap.hidden = true;
-        countEl.textContent = '';
-        countEl.className = 'caption-count';
-        warnEl.hidden = true;
-      }
-    }
-
-    function updateOverrideCaptionCount(platform, text) {
-      var countEl = document.getElementById('overrideCaptionCount');
-      var warnEl = document.getElementById('overrideCaptionWarn');
-      if (!countEl || !warnEl) return;
-      var limit = CAPTION_LIMITS[platform];
-      if (!limit) {
-        countEl.textContent = String((text || '').length) + ' chars';
-        countEl.className = 'caption-count';
-        warnEl.hidden = true;
-        return;
-      }
-      var len = (text || '').length;
-      countEl.textContent = len + ' / ' + limit;
-      var over = len > limit;
-      countEl.className = 'caption-count' + (over ? ' over' : '');
-      warnEl.hidden = !over;
-      warnEl.textContent = over ? 'Exceeds ' + platformNames[platform] + ' limit — post may fail' : '';
     }
 
     function updateSchedulePreview() {
@@ -2046,19 +1969,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       }, 250);
     }
 
-    function appendOverrideFields(form) {
-      Object.keys(overrideEnabled).forEach(function(platform) {
-        if (overrideEnabled[platform]) {
-          form.set('overrideEnabled_' + platform, 'on');
-        }
-      });
-      Object.keys(overrideText).forEach(function(platform) {
-        if (overrideText[platform] !== undefined && overrideText[platform] !== '') {
-          form.set('overrideText_' + platform, overrideText[platform]);
-        }
-      });
-    }
-
     function buildCampaignForm() {
       var form = new FormData(formEl);
       form.set('account', currentAccount());
@@ -2069,7 +1979,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         var fieldName = 'saved' + key.charAt(0).toUpperCase() + key.slice(1) + 'Path';
         form.set(fieldName, file.path);
       });
-      appendOverrideFields(form);
       return form;
     }
 
@@ -2579,29 +2488,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       updateTargetSelection();
     });
 
-    document.getElementById('overrideCaptionCheckbox').addEventListener('change', function() {
-      var platform = selectedDetailPlatform;
-      var input = document.getElementById('overrideCaptionInput');
-      if (this.checked) {
-        overrideEnabled[platform] = true;
-        if (!overrideText[platform]) {
-          overrideText[platform] = document.getElementById('textInput').value || '';
-        }
-      } else {
-        overrideEnabled[platform] = false;
-      }
-      updateOvrBadges();
-      updateOverrideSection(platform);
-      updateBaseCaptionCount(document.getElementById('textInput').value || '');
-      saveStateSoon();
-    });
-
-    document.getElementById('overrideCaptionInput').addEventListener('input', function() {
-      var platform = selectedDetailPlatform;
-      overrideText[platform] = this.value;
-      updateOverrideCaptionCount(platform, this.value);
-      saveStateSoon();
-    });
     document.querySelectorAll('[data-file-label]').forEach(function(input) {
       input.addEventListener('change', function() {
         updateFileLabel(input);
