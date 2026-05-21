@@ -63,7 +63,7 @@ interface StatusRow {
 interface CampaignResult {
   platform: PostingPlatform;
   ok: boolean;
-  status?: 'posted' | 'queued' | 'failed' | 'skipped';
+  status?: 'posted' | 'queued' | 'failed' | 'skipped' | 'prepared';
   url?: string;
   error?: string;
   detail?: string;
@@ -79,7 +79,7 @@ interface UiState {
   updatedAt?: string;
 }
 
-interface CampaignAssets {
+export interface CampaignAssets {
   imagePath?: string;
   videoPath?: string;
   coverPath?: string;
@@ -127,7 +127,7 @@ interface HistoryEntry {
   account: string;
   platform: PostingPlatform;
   ok: boolean;
-  status: 'posted' | 'queued' | 'failed' | 'skipped';
+  status: 'posted' | 'queued' | 'failed' | 'skipped' | 'prepared';
   textPreview: string;
   queueId?: string;
   scheduledAt?: string;
@@ -150,6 +150,29 @@ export interface UiServerHandle {
 const loginFlows = new Map<string, LoginFlow>();
 const activePosting = new Map<string, number>();
 
+export const MANUAL_VERIFY_PLATFORMS = ['linkedin', 'x', 'facebook', 'instagram'] as const;
+export type ManualVerifyPlatform = (typeof MANUAL_VERIFY_PLATFORMS)[number];
+
+interface ManualVerifySession {
+  accountId: string;
+  context: BrowserContext;
+  close: () => Promise<void>;
+  startedAt: number;
+}
+
+export interface ManualVerifyDriver {
+  launch: (options: LaunchOptions) => Promise<{
+    context: BrowserContext;
+    close: () => Promise<void>;
+  }>;
+  isLoggedIn: (platform: ManualVerifyPlatform, page: Page) => Promise<boolean>;
+  compose: (platform: ManualVerifyPlatform, page: Page, input: unknown) => Promise<void>;
+  markValidated: (platform: ManualVerifyPlatform, accountId: AccountId) => Promise<void>;
+}
+
+const manualVerifySessions = new Map<string, ManualVerifySession>();
+let manualVerifyDriverOverride: ManualVerifyDriver | null = null;
+
 function acquirePostingLock(accountId: string): void {
   activePosting.set(accountId, (activePosting.get(accountId) ?? 0) + 1);
 }
@@ -162,6 +185,89 @@ function releasePostingLock(accountId: string): void {
 
 function isPostingActive(accountId: string): boolean {
   return (activePosting.get(accountId) ?? 0) > 0;
+}
+
+class ManualVerifyActiveError extends Error {
+  constructor(accountId: string) {
+    super(
+      `Manual verification browser is open for ${accountId}. Close it before running automatic posting.`,
+    );
+    this.name = 'ManualVerifyActiveError';
+  }
+}
+
+export function isManualVerifyPlatform(value: PostingPlatform): value is ManualVerifyPlatform {
+  return MANUAL_VERIFY_PLATFORMS.includes(value as ManualVerifyPlatform);
+}
+
+export function unsupportedManualVerifyTargets(targets: PostingPlatform[]): PostingPlatform[] {
+  return targets.filter((target) => !isManualVerifyPlatform(target));
+}
+
+export function setManualVerifyDriverForTests(driver: ManualVerifyDriver | null): void {
+  manualVerifyDriverOverride = driver;
+}
+
+function getManualVerifyKey(accountId: string): string {
+  return accountKey(accountId);
+}
+
+function isManualVerifyActive(accountId: string): boolean {
+  return legacyVariants(accountId).some((variant) =>
+    manualVerifySessions.has(getManualVerifyKey(variant)),
+  );
+}
+
+function isPostingActiveForAccount(accountId: string): boolean {
+  return legacyVariants(accountId).some(isPostingActive);
+}
+
+function isLoginFlowActiveForAccount(accountId: string): boolean {
+  for (const flow of loginFlows.values()) {
+    if (sameAccount(flow.accountId, accountId)) return true;
+  }
+  return false;
+}
+
+function assertNoManualVerifyForAutomaticPost(accountId: string): void {
+  if (isManualVerifyActive(accountId)) throw new ManualVerifyActiveError(accountId);
+}
+
+function assertCanStartManualVerify(accountId: string): void {
+  if (isPostingActiveForAccount(accountId)) {
+    throw new Error('A posting flow is active for this account. Wait for it to complete first.');
+  }
+  if (isManualVerifyActive(accountId)) {
+    throw new Error('A manual verification browser is already open for this account.');
+  }
+  if (isLoginFlowActiveForAccount(accountId)) {
+    throw new Error('A login browser is already open for this account. Close it first.');
+  }
+}
+
+function trackManualVerifySession(
+  accountId: string,
+  context: BrowserContext,
+  close: () => Promise<void>,
+): void {
+  const key = getManualVerifyKey(accountId);
+  const session: ManualVerifySession = {
+    accountId,
+    context,
+    close,
+    startedAt: Date.now(),
+  };
+  manualVerifySessions.set(key, session);
+
+  context.on('close', () => {
+    if (manualVerifySessions.get(key) === session) manualVerifySessions.delete(key);
+  });
+}
+
+async function closeManualVerifySessions(): Promise<void> {
+  const sessions = [...manualVerifySessions.entries()];
+  manualVerifySessions.clear();
+  await Promise.allSettled(sessions.map(([, session]) => session.close()));
 }
 
 function findLoginFlowId(platform: PostingPlatform, accountId: string): string | null {
@@ -178,6 +284,7 @@ const DEFAULT_POST_LIMIT_PER_HOUR = 4;
 const DEFAULT_POST_LIMIT_PER_DAY = 20;
 const MAX_POST_LIMIT = 1000;
 const MAX_SLOW_MO_MS = 5000;
+const UI_PORT_SEARCH_ATTEMPTS = 128;
 const HISTORY_LIMIT = 250;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
 const SAFETY_STOP_PATTERNS = [
@@ -912,6 +1019,7 @@ async function runPost(form: FormData): Promise<PostResult> {
   const accountId = formString(form, 'account');
   if (!isPostingPlatform(platformRaw)) throw new Error('Choose a supported platform');
   if (accountId === undefined) throw new Error('Account is required');
+  assertNoManualVerifyForAutomaticPost(accountId);
 
   acquirePostingLock(accountId);
   try {
@@ -1215,6 +1323,96 @@ function buildCampaignInput(
   }
 }
 
+export function buildManualCampaignInput(
+  platform: ManualVerifyPlatform,
+  form: FormData,
+  assets: CampaignAssets,
+): unknown {
+  const input = buildCampaignInput(platform, form, assets, true);
+  if (typeof input !== 'object' || input === null) return input;
+  return { ...input, dryRun: true };
+}
+
+async function isManualPlatformLoggedIn(
+  platform: ManualVerifyPlatform,
+  page: Page,
+): Promise<boolean> {
+  switch (platform) {
+    case 'facebook': {
+      const auth = (await import('../platforms/facebook/auth.js')) as {
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      return auth.isLoggedIn(page);
+    }
+    case 'instagram': {
+      const auth = (await import('../platforms/instagram/auth.js')) as {
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      return auth.isLoggedIn(page);
+    }
+    case 'linkedin': {
+      const auth = (await import('../platforms/linkedin/auth.js')) as {
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      return auth.isLoggedIn(page);
+    }
+    case 'x': {
+      const auth = (await import('../platforms/x/auth.js')) as {
+        isLoggedIn: (page: Page) => Promise<boolean>;
+      };
+      return auth.isLoggedIn(page);
+    }
+  }
+}
+
+async function composeManualPlatform(
+  platform: ManualVerifyPlatform,
+  page: Page,
+  input: unknown,
+): Promise<void> {
+  switch (platform) {
+    case 'facebook': {
+      const composer = (await import('../platforms/facebook/compose.js')) as {
+        createPost: (page: Page, input: unknown) => Promise<unknown>;
+      };
+      await composer.createPost(page, input);
+      return;
+    }
+    case 'instagram': {
+      const composer = (await import('../platforms/instagram/composer.js')) as {
+        createPost: (page: Page, input: unknown) => Promise<unknown>;
+      };
+      await composer.createPost(page, input);
+      return;
+    }
+    case 'linkedin': {
+      const composer = (await import('../platforms/linkedin/compose.js')) as {
+        createPost: (page: Page, input: unknown) => Promise<unknown>;
+      };
+      await composer.createPost(page, input);
+      return;
+    }
+    case 'x': {
+      const composer = (await import('../platforms/x/compose.js')) as {
+        postTweet: (page: Page, input: unknown) => Promise<unknown>;
+      };
+      await composer.postTweet(page, input);
+      return;
+    }
+  }
+}
+
+function getManualVerifyDriver(): ManualVerifyDriver {
+  return (
+    manualVerifyDriverOverride ?? {
+      launch: launchBrowser,
+      isLoggedIn: isManualPlatformLoggedIn,
+      compose: composeManualPlatform,
+      markValidated: markUserDataDirValidated,
+    }
+  );
+}
+
 async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
   const bucket = `campaign-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const imagePath = await optionalFile(form, 'image', bucket);
@@ -1236,6 +1434,7 @@ async function runCampaignNow(
   runImmediate?: boolean,
 ): Promise<{ ok: boolean; results: CampaignResult[] }> {
   const accountId = campaignAccount(form);
+  assertNoManualVerifyForAutomaticPost(accountId);
   acquirePostingLock(accountId);
   try {
     const targets = campaignTargets(form);
@@ -1314,6 +1513,75 @@ async function runCampaign(
   return runCampaignNow(form, assets, {}, runImmediate);
 }
 
+async function runManualCampaign(
+  form: FormData,
+): Promise<{ ok: boolean; results: CampaignResult[] }> {
+  const accountId = campaignAccount(form);
+  assertCanStartManualVerify(accountId);
+
+  const targets = campaignTargets(form);
+  const unsupported = unsupportedManualVerifyTargets(targets);
+  if (unsupported.length > 0) {
+    throw new Error(
+      `Manual verify currently supports LinkedIn, X, Facebook, and Instagram. Remove: ${unsupported
+        .map((platform) => platform)
+        .join(', ')}`,
+    );
+  }
+
+  const manualTargets = targets.filter(isManualVerifyPlatform);
+  const assets = await collectCampaignAssets(form);
+  const driver = getManualVerifyDriver();
+  const ownerPlatform = manualTargets.includes('x') ? 'x' : manualTargets[0];
+  if (ownerPlatform === undefined) throw new Error('Choose at least one manual verify platform');
+
+  const launchOptions = await buildLaunchOptions(ownerPlatform, accountId, form);
+  const { context, close } = await driver.launch(launchOptions);
+  trackManualVerifySession(accountId, context, close);
+
+  const existingPages = context.pages();
+  const preview = textPreview(textForCampaign(form));
+  const results: CampaignResult[] = [];
+
+  for (const [index, platform] of manualTargets.entries()) {
+    const page =
+      index === 0 ? (existingPages[0] ?? (await context.newPage())) : await context.newPage();
+
+    try {
+      const loggedIn = await driver.isLoggedIn(platform, page);
+      if (!loggedIn) {
+        results.push({
+          platform,
+          ok: false,
+          status: 'failed',
+          error: 'not-logged-in',
+          detail: 'Not logged in - log in in this tab, then rerun Prepare',
+        });
+        continue;
+      }
+
+      await driver.markValidated(platform, accountId);
+      await driver.compose(platform, page, buildManualCampaignInput(platform, form, assets));
+      results.push({
+        platform,
+        ok: true,
+        status: 'prepared',
+        detail: 'Form filled - submit manually in browser tab',
+      });
+    } catch (err) {
+      results.push({
+        platform,
+        ok: false,
+        status: 'failed',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  await appendHistory(historyFromResults(results, accountId, preview));
+  return { ok: results.every((result) => result.ok), results };
+}
+
 async function runQueuedCampaign(
   entry: QueueEntry,
 ): Promise<{ ok: boolean; results: CampaignResult[] }> {
@@ -1334,6 +1602,8 @@ async function processDueQueue(): Promise<void> {
       .sort((left, right) => Date.parse(left.scheduledAt) - Date.parse(right.scheduledAt));
 
     for (const queuedEntry of due) {
+      if (isManualVerifyActive(queuedEntry.account)) continue;
+
       const startedAt = new Date().toISOString();
       const postingEntry = await updateQueueEntry(queuedEntry.id, (entry) => ({
         ...entry,
@@ -1351,6 +1621,15 @@ async function processDueQueue(): Promise<void> {
         }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        if (err instanceof ManualVerifyActiveError) {
+          await updateQueueEntry(postingEntry.id, (entry) => ({
+            ...entry,
+            status: 'queued',
+            error: message,
+          }));
+          continue;
+        }
+
         const results = postingEntry.targets.map((platform) => ({
           platform,
           ok: false,
@@ -1411,6 +1690,13 @@ export async function deleteAccount(
     return {
       ok: false,
       error: 'A posting flow is active for this account. Wait for it to complete and try again.',
+    };
+  }
+
+  if (isManualVerifyActive(accountId)) {
+    return {
+      ok: false,
+      error: 'Manual verification browser is currently open for this account. Close it first.',
     };
   }
 
@@ -1557,6 +1843,10 @@ async function startLogin(
   _useBrowserProfile: boolean,
   spoofFingerprint?: unknown,
 ): Promise<string> {
+  if (isManualVerifyActive(accountId)) {
+    throw new Error('Manual verification browser is open for this account. Close it first.');
+  }
+
   for (const [flowId, flow] of loginFlows) {
     if (flow.platform === platform && flow.accountId === accountId) {
       await flow.close().catch(() => undefined);
@@ -1697,6 +1987,9 @@ async function startCredentialLogin(
 ): Promise<{ saved: boolean; flowId?: string }> {
   if (identity.trim().length === 0) throw new Error('Email or username is required');
   if (password.length === 0) throw new Error('Password is required');
+  if (isManualVerifyActive(accountId)) {
+    throw new Error('Manual verification browser is open for this account. Close it first.');
+  }
 
   for (const [flowId, flow] of loginFlows) {
     if (flow.platform === platform && flow.accountId === accountId) {
@@ -2001,6 +2294,16 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/campaign/manual') {
+    const result = await runManualCampaign(await readForm(req));
+    sendJson(res, 200, {
+      ok: true,
+      campaignOk: result.ok,
+      results: result.results,
+    });
+    return;
+  }
+
   sendJson(res, 404, { ok: false, error: 'Not found' });
 }
 
@@ -2029,14 +2332,35 @@ async function listen(server: Server, host: string, port: number): Promise<numbe
   });
 }
 
+export function isRetryableListenError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException).code;
+  return code === 'EADDRINUSE' || code === 'EACCES';
+}
+
+export function getUiPortCandidates(preferredPort: number): number[] {
+  if (preferredPort === 0) return [0];
+
+  const candidates: number[] = [];
+  for (let attempt = 0; attempt < UI_PORT_SEARCH_ATTEMPTS; attempt++) {
+    const port = preferredPort + attempt;
+    if (port > 65_535) break;
+    candidates.push(port);
+  }
+  candidates.push(0);
+  return candidates;
+}
+
+function formatPortCandidate(port: number): string {
+  return port === 0 ? 'an OS-assigned port' : String(port);
+}
+
 export async function startUiServer(options: UiServerOptions = {}): Promise<UiServerHandle> {
   await migrateLegacyAccountIds();
 
   const host = options.host ?? '127.0.0.1';
   const preferredPort = options.port ?? 4317;
 
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const port = preferredPort + attempt;
+  for (const port of getUiPortCandidates(preferredPort)) {
     const server = createServer((req, res) => {
       void handle(req, res);
     });
@@ -2048,14 +2372,20 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       return {
         server,
         url,
-        close: () =>
-          new Promise<void>((resolve, reject) => {
-            clearInterval(queueTimer);
+        close: async () => {
+          clearInterval(queueTimer);
+          await closeManualVerifySessions();
+          await new Promise<void>((resolve, reject) => {
             server.close((err) => (err !== undefined ? reject(err) : resolve()));
-          }),
+          });
+        },
       };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw err;
+      if (!isRetryableListenError(err)) throw err;
+      const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+      process.stderr.write(
+        `[signal-fire] local UI port ${formatPortCandidate(port)} unavailable (${code}); trying another port\n`,
+      );
     }
   }
 
