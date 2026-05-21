@@ -1109,6 +1109,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var runLogEntries = [];
     var runLogTimer = null;
     var draftFiles = {};
+    var draftUploadRequests = {};
     var activeView = 'compose';
     var accountEl = document.getElementById('account');
     var accountMirrorEl = document.getElementById('accountMirror');
@@ -1609,10 +1610,13 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         saveStateSoon();
         return;
       }
+      var requestId = Date.now() + ':' + Math.random();
+      draftUploadRequests[input.name] = requestId;
       var form = new FormData();
       form.set('kind', input.name);
       form.set('file', input.files[0]);
       var data = await api('/api/draft-file', { method: 'POST', body: form });
+      if (draftUploadRequests[input.name] !== requestId) return;
       draftFiles[input.name] = data.file;
       updateFileLabel(input);
       saveStateSoon();

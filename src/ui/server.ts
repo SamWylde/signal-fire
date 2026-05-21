@@ -316,6 +316,7 @@ const MAX_SLOW_MO_MS = 5000;
 const UI_PORT_SEARCH_ATTEMPTS = 128;
 const HISTORY_LIMIT = 250;
 const RUN_LOG_LIMIT = 500;
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const RUN_LOG_DETAIL_LIMIT = 2048;
 const DEBUG_DOM_SNIPPET_LIMIT = 500;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
@@ -467,8 +468,9 @@ function isUploadedFile(value: FormDataEntryValue): value is File {
   return typeof value === 'object' && 'arrayBuffer' in value && 'name' in value && 'size' in value;
 }
 
-async function saveUploadedFile(file: File, bucket: string): Promise<string | undefined> {
+export async function saveUploadedFile(file: File, bucket: string): Promise<string | undefined> {
   if (file.size === 0 || file.name.length === 0) return undefined;
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error('Uploaded file exceeds 200 MB limit');
   await ensureSignalFireDir();
   const uploadDir = path.join(getUploadRoot(), bucket);
   await fs.mkdir(uploadDir, { recursive: true });
@@ -479,6 +481,21 @@ async function saveUploadedFile(file: File, bucket: string): Promise<string | un
   );
   await fs.writeFile(filePath, Buffer.from(await file.arrayBuffer()));
   return filePath;
+}
+
+async function pruneOldDraftFiles(kind: string, keepFilePath: string): Promise<void> {
+  const dir = path.dirname(keepFilePath);
+  const keepName = path.basename(keepFilePath);
+  const entries = await fs.readdir(dir).catch(() => []);
+  await Promise.allSettled(
+    entries
+      .filter((name) => name !== keepName)
+      .map((name) =>
+        fs.unlink(path.join(dir, name)).catch((err: unknown) => {
+          process.stderr.write(`[signal-fire] could not prune old draft ${name}: ${err}\n`);
+        }),
+      ),
+  );
 }
 
 function savedPathFieldName(key: string): string {
@@ -551,6 +568,7 @@ async function saveDraftFile(form: FormData): Promise<DraftFileRef> {
   if (value === null || !isUploadedFile(value)) throw new Error('Draft file is required');
   const filePath = await saveUploadedFile(value, `draft-${kind}`);
   if (filePath === undefined) throw new Error('Draft file is required');
+  await pruneOldDraftFiles(kind, filePath);
 
   return {
     path: filePath,
@@ -1123,13 +1141,11 @@ async function buildPostInput(
       const mediaPaths = await optionalFiles(form, 'media', platform);
       const communityName = formString(form, 'communityName');
       const communityId = formString(form, 'communityId');
-      const xDryRun = formBool(form, 'xDryRun');
       return {
         text,
         ...(mediaPaths.length > 0 && { mediaPaths }),
         ...(communityName !== undefined && { communityName }),
         ...(communityId !== undefined && { communityId }),
-        ...(xDryRun && { dryRun: true }),
       };
     }
     case 'facebook': {
@@ -1150,7 +1166,6 @@ async function buildPostInput(
         );
         postAs = 'personal';
       }
-      const facebookDryRun = formBool(form, 'facebookDryRun');
       return {
         pageUrl,
         text,
@@ -1158,7 +1173,6 @@ async function buildPostInput(
         postAs,
         ...(facebookPageName !== undefined &&
           facebookPageName.trim().length > 0 && { facebookPageName: facebookPageName.trim() }),
-        ...(facebookDryRun && { dryRun: true }),
       };
     }
     case 'linkedin': {
@@ -1173,7 +1187,6 @@ async function buildPostInput(
       }
       const linkedinTitle = formString(form, 'linkedinTitle');
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
-      const linkedinDryRun = formBool(form, 'linkedinDryRun');
       return {
         text,
         ...(imagePath !== undefined && { imagePath }),
@@ -1182,7 +1195,6 @@ async function buildPostInput(
         ...(linkedinCompanyId !== undefined && { linkedinCompanyId }),
         ...(linkedinTitle !== undefined && { title: linkedinTitle }),
         ...(linkedinShareIntro !== undefined && { shareIntro: linkedinShareIntro }),
-        ...(linkedinDryRun && { dryRun: true }),
       };
     }
     case 'youtube': {
@@ -1218,11 +1230,9 @@ async function buildPostInput(
     case 'instagram': {
       const imagePath = await requireFile(form, 'image', platform);
       const caption = formString(form, 'caption');
-      const instagramDryRun = formBool(form, 'instagramDryRun');
       return {
         imagePath,
         ...(caption !== undefined && { caption }),
-        ...(instagramDryRun && { dryRun: true }),
       };
     }
   }
@@ -1447,13 +1457,11 @@ function buildCampaignInput(
       );
       const communityName = formString(form, 'communityName');
       const communityId = formString(form, 'communityId');
-      const xDryRun = formBool(form, 'xDryRun');
       return {
         text,
         ...(mediaPaths.length > 0 && { mediaPaths }),
         ...(communityName !== undefined && { communityName }),
         ...(communityId !== undefined && { communityId }),
-        ...(xDryRun && { dryRun: true }),
       };
     }
     case 'facebook': {
@@ -1472,7 +1480,6 @@ function buildCampaignInput(
         );
         postAs = 'personal';
       }
-      const facebookDryRun = formBool(form, 'facebookDryRun');
       return {
         pageUrl,
         text,
@@ -1480,7 +1487,6 @@ function buildCampaignInput(
         postAs,
         ...(facebookPageName !== undefined &&
           facebookPageName.trim().length > 0 && { facebookPageName: facebookPageName.trim() }),
-        ...(facebookDryRun && { dryRun: true }),
       };
     }
     case 'linkedin': {
@@ -1495,7 +1501,6 @@ function buildCampaignInput(
         formString(form, 'linkedinPostType') === 'article' ? 'article' : 'post';
       const linkedinTitle = formString(form, 'linkedinTitle');
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
-      const linkedinDryRun = formBool(form, 'linkedinDryRun');
       return {
         text,
         ...(assets.imagePath !== undefined && { imagePath: assets.imagePath }),
@@ -1505,7 +1510,6 @@ function buildCampaignInput(
         linkedinPostType,
         ...(linkedinTitle !== undefined && { title: linkedinTitle }),
         ...(linkedinShareIntro !== undefined && { shareIntro: linkedinShareIntro }),
-        ...(linkedinDryRun && { dryRun: true }),
       };
     }
     case 'youtube': {
@@ -1527,11 +1531,9 @@ function buildCampaignInput(
     }
     case 'instagram': {
       if (assets.imagePath === undefined) throw new Error('Image is required for Instagram');
-      const instagramDryRun = formBool(form, 'instagramDryRun');
       return {
         imagePath: assets.imagePath,
         ...(text !== undefined && { caption: text }),
-        ...(instagramDryRun && { dryRun: true }),
       };
     }
   }
