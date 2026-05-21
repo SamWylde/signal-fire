@@ -263,18 +263,35 @@ async function createPostViaDirectUrl(
     if (input.imagePath !== undefined) {
       logLinkedIn(input, 'Adding image to LinkedIn company-share post');
       const addMediaBtn = page.locator(LINKEDIN.selectors.companyShare.addMediaButton).first();
+      const uploadFromComputerBtn = page
+        .locator(LINKEDIN.selectors.composer.uploadFromComputerButton)
+        .first();
+
+      // Register filechooser handler BEFORE any click so we don't miss the event,
+      // regardless of whether the UI is one-step or two-step.
+      const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
+
       try {
-        const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 5000 });
         await humanClick(page, addMediaBtn);
+      } catch {
+        throw new Error('Could not find company-share media button - selectors may be stale');
+      }
+
+      // LinkedIn shows an intermediate "Select files to begin" modal on most surfaces.
+      // If the "Upload from computer" button appears within a short window, click it —
+      // that's the click that actually opens the OS file chooser.
+      try {
+        await uploadFromComputerBtn.waitFor({ state: 'visible', timeout: 3000 });
+        await humanClick(page, uploadFromComputerBtn);
+      } catch {
+        // No intermediate modal on this surface; the first click already opened the picker.
+      }
+
+      try {
         const fileChooser = await fileChooserPromise;
         await fileChooser.setFiles(input.imagePath);
       } catch {
-        // Fallback: chooser event didn't fire, try setInputFiles on the hidden input
-        try {
-          await humanClick(page, addMediaBtn);
-        } catch {
-          throw new Error('Could not find company-share media button - selectors may be stale');
-        }
+        // Chooser never fired; fall back to setInputFiles on the hidden input.
         const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
         await fileInput.setInputFiles(input.imagePath);
       }
@@ -506,18 +523,35 @@ export async function createPost(
   if (resolvedInput.imagePath !== undefined) {
     logLinkedIn(resolvedInput, 'Adding image to LinkedIn post');
     const addMediaBtn = page.locator(LINKEDIN.selectors.composer.imageButtonAria).first();
+    const uploadFromComputerBtn = page
+      .locator(LINKEDIN.selectors.composer.uploadFromComputerButton)
+      .first();
+
+    // Register filechooser handler BEFORE any click so we don't miss the event,
+    // regardless of whether the UI is one-step or two-step.
+    const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 15000 });
+
     try {
-      const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 5000 });
       await humanClick(page, addMediaBtn);
+    } catch {
+      throw new Error('Could not find image attach button - selectors may be stale');
+    }
+
+    // LinkedIn shows an intermediate "Select files to begin" modal on most surfaces.
+    // If the "Upload from computer" button appears within a short window, click it —
+    // that's the click that actually opens the OS file chooser.
+    try {
+      await uploadFromComputerBtn.waitFor({ state: 'visible', timeout: 3000 });
+      await humanClick(page, uploadFromComputerBtn);
+    } catch {
+      // No intermediate modal on this surface; the first click already opened the picker.
+    }
+
+    try {
       const fileChooser = await fileChooserPromise;
       await fileChooser.setFiles(resolvedInput.imagePath);
     } catch {
-      // Fallback: chooser event didn't fire, try setInputFiles on the hidden input
-      try {
-        await humanClick(page, addMediaBtn);
-      } catch {
-        throw new Error('Could not find image attach button - selectors may be stale');
-      }
+      // Chooser never fired; fall back to setInputFiles on the hidden input.
       const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
       await fileInput.setInputFiles(resolvedInput.imagePath);
     }
