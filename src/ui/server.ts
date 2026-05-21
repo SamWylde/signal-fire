@@ -136,6 +136,17 @@ interface HistoryEntry {
   detail?: string;
 }
 
+interface RunLogEntry {
+  id: string;
+  at: string;
+  account?: string;
+  platform?: PostingPlatform;
+  scope: 'manual' | 'campaign' | 'queue' | 'login' | 'system';
+  level: 'info' | 'success' | 'warn' | 'error';
+  message: string;
+  detail?: string;
+}
+
 export interface UiServerOptions {
   host?: string;
   port?: number;
@@ -260,7 +271,15 @@ function trackManualVerifySession(
   manualVerifySessions.set(key, session);
 
   context.on('close', () => {
-    if (manualVerifySessions.get(key) === session) manualVerifySessions.delete(key);
+    if (manualVerifySessions.get(key) === session) {
+      manualVerifySessions.delete(key);
+      void appendRunLog({
+        account: accountId,
+        scope: 'manual',
+        level: 'info',
+        message: 'Manual verification browser closed',
+      });
+    }
   });
 }
 
@@ -286,6 +305,7 @@ const MAX_POST_LIMIT = 1000;
 const MAX_SLOW_MO_MS = 5000;
 const UI_PORT_SEARCH_ATTEMPTS = 128;
 const HISTORY_LIMIT = 250;
+const RUN_LOG_LIMIT = 500;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
 const SAFETY_STOP_PATTERNS = [
   'action blocked',
@@ -316,6 +336,10 @@ function getUiStatePath(): string {
 
 function getHistoryPath(): string {
   return path.join(getRoot(), 'ui', 'history.json');
+}
+
+function getRunLogPath(): string {
+  return path.join(getRoot(), 'ui', 'run-log.json');
 }
 
 function getQueuePath(): string {
@@ -583,6 +607,41 @@ async function saveHistory(entries: HistoryEntry[]): Promise<void> {
 async function appendHistory(entries: HistoryEntry[]): Promise<void> {
   if (entries.length === 0) return;
   await saveHistory([...entries, ...(await loadHistory())]);
+}
+
+async function loadRunLog(): Promise<RunLogEntry[]> {
+  return readJsonFile<RunLogEntry[]>(getRunLogPath(), []);
+}
+
+async function saveRunLog(entries: RunLogEntry[]): Promise<void> {
+  await writeJsonFile(getRunLogPath(), entries.slice(0, RUN_LOG_LIMIT));
+}
+
+async function appendRunLog(entry: Omit<RunLogEntry, 'id' | 'at'>): Promise<RunLogEntry> {
+  const fullEntry: RunLogEntry = {
+    id: randomUUID(),
+    at: new Date().toISOString(),
+    ...entry,
+  };
+  await saveRunLog([fullEntry, ...(await loadRunLog())]);
+  const prefix = ['signal-fire', entry.scope, entry.platform, entry.account]
+    .filter((item): item is string => item !== undefined && item.length > 0)
+    .join(':');
+  process.stderr.write(
+    `[${prefix}] ${entry.level}: ${entry.message}${entry.detail ? ` - ${entry.detail}` : ''}\n`,
+  );
+  return fullEntry;
+}
+
+async function clearRunLog(): Promise<void> {
+  await saveRunLog([]);
+}
+
+function runLogsForClient(entries: RunLogEntry[], account?: string): RunLogEntry[] {
+  if (account === undefined) return entries;
+  return entries.filter(
+    (entry) => entry.account === undefined || sameAccount(entry.account, account),
+  );
 }
 
 async function loadQueue(): Promise<QueueEntry[]> {
@@ -1438,6 +1497,13 @@ async function runCampaignNow(
   acquirePostingLock(accountId);
   try {
     const targets = campaignTargets(form);
+    await appendRunLog({
+      account: accountId,
+      scope: 'campaign',
+      level: 'info',
+      message: `Live posting started for ${targets.length} platform${targets.length === 1 ? '' : 's'}`,
+      detail: targets.join(', '),
+    });
     const delayRange = parseCampaignDelayRangeMs(
       formString(form, 'campaignDelayMinSeconds'),
       formString(form, 'campaignDelayMaxSeconds'),
@@ -1450,9 +1516,23 @@ async function runCampaignNow(
     for (const [index, platform] of targets.entries()) {
       let attemptedPost = false;
       try {
+        await appendRunLog({
+          account: accountId,
+          platform,
+          scope: 'campaign',
+          level: 'info',
+          message: 'Preparing live post',
+        });
         const input = buildCampaignInput(platform, form, assets, runImmediate);
         attemptedPost = true;
         const launchOptions = await buildLaunchOptions(platform, accountId, form);
+        await appendRunLog({
+          account: accountId,
+          platform,
+          scope: 'campaign',
+          level: 'info',
+          message: 'Opening browser and composer',
+        });
         const result = await invokePost(platform, input, accountId, launchOptions, rateLimits);
         results.push({
           platform,
@@ -1460,6 +1540,15 @@ async function runCampaignNow(
           status: result.ok ? 'posted' : 'failed',
           ...(result.url !== undefined && { url: result.url }),
           ...(result.error !== undefined && { error: result.error }),
+        });
+        await appendRunLog({
+          account: accountId,
+          platform,
+          scope: 'campaign',
+          level: result.ok ? 'success' : 'error',
+          message: result.ok ? 'Live post completed' : 'Live post failed',
+          ...(result.url !== undefined && { detail: result.url }),
+          ...(result.error !== undefined && { detail: result.error }),
         });
 
         if (
@@ -1477,6 +1566,14 @@ async function runCampaignNow(
           status: 'failed',
           error: err instanceof Error ? err.message : String(err),
         });
+        await appendRunLog({
+          account: accountId,
+          platform,
+          scope: 'campaign',
+          level: 'error',
+          message: 'Live post failed',
+          detail: err instanceof Error ? err.message : String(err),
+        });
 
         const error = results.at(-1)?.error ?? '';
         if (shouldStopCampaignAfterError(error)) {
@@ -1487,11 +1584,26 @@ async function runCampaignNow(
 
       const delayMs = randomDelayMs(delayRange);
       if (attemptedPost && index < targets.length - 1 && delayMs > 0) {
+        await appendRunLog({
+          account: accountId,
+          platform,
+          scope: 'campaign',
+          level: 'info',
+          message: 'Waiting before next platform',
+          detail: `${Math.round(delayMs / 1000)} seconds`,
+        });
         await delay(delayMs);
       }
     }
 
     await appendHistory(historyFromResults(results, accountId, preview, historyMeta));
+    await appendRunLog({
+      account: accountId,
+      scope: 'campaign',
+      level: results.every((result) => result.ok) ? 'success' : 'warn',
+      message: 'Live posting finished',
+      detail: `${results.filter((result) => result.ok).length}/${results.length} succeeded`,
+    });
     return { ok: results.every((result) => result.ok), results };
   } finally {
     releasePostingLock(accountId);
@@ -1505,6 +1617,13 @@ async function runCampaign(
   const schedule = parseSchedule(formString(form, 'schedule'));
   if (schedule !== undefined && schedule.at.getTime() > Date.now()) {
     const entry = await enqueueCampaign(form, assets, schedule);
+    await appendRunLog({
+      account: entry.account,
+      scope: 'queue',
+      level: 'success',
+      message: 'Campaign queued',
+      detail: `${entry.targets.join(', ')} at ${entry.scheduledAt}`,
+    });
     return { ok: true, queued: true, queue: [entry], results: queueResults(entry) };
   }
 
@@ -1520,8 +1639,22 @@ async function runManualCampaign(
   assertCanStartManualVerify(accountId);
 
   const targets = campaignTargets(form);
+  await appendRunLog({
+    account: accountId,
+    scope: 'manual',
+    level: 'info',
+    message: `Manual prepare requested for ${targets.length} platform${targets.length === 1 ? '' : 's'}`,
+    detail: targets.join(', '),
+  });
   const unsupported = unsupportedManualVerifyTargets(targets);
   if (unsupported.length > 0) {
+    await appendRunLog({
+      account: accountId,
+      scope: 'manual',
+      level: 'error',
+      message: 'Manual prepare rejected',
+      detail: `Unsupported targets: ${unsupported.join(', ')}`,
+    });
     throw new Error(
       `Manual verify currently supports LinkedIn, X, Facebook, and Instagram. Remove: ${unsupported
         .map((platform) => platform)
@@ -1536,8 +1669,22 @@ async function runManualCampaign(
   if (ownerPlatform === undefined) throw new Error('Choose at least one manual verify platform');
 
   const launchOptions = await buildLaunchOptions(ownerPlatform, accountId, form);
+  await appendRunLog({
+    account: accountId,
+    scope: 'manual',
+    level: 'info',
+    message: 'Opening shared manual verification browser',
+    detail: `Profile owner: ${ownerPlatform}`,
+  });
   const { context, close } = await driver.launch(launchOptions);
   trackManualVerifySession(accountId, context, close);
+  await appendRunLog({
+    account: accountId,
+    scope: 'manual',
+    level: 'success',
+    message: 'Manual verification browser opened',
+    detail: 'Tabs stay open so you can submit manually',
+  });
 
   const existingPages = context.pages();
   const preview = textPreview(textForCampaign(form));
@@ -1548,8 +1695,30 @@ async function runManualCampaign(
       index === 0 ? (existingPages[0] ?? (await context.newPage())) : await context.newPage();
 
     try {
+      await appendRunLog({
+        account: accountId,
+        platform,
+        scope: 'manual',
+        level: 'info',
+        message: `Preparing tab ${index + 1} of ${manualTargets.length}`,
+      });
+      await appendRunLog({
+        account: accountId,
+        platform,
+        scope: 'manual',
+        level: 'info',
+        message: 'Checking logged-in session',
+      });
       const loggedIn = await driver.isLoggedIn(platform, page);
       if (!loggedIn) {
+        await appendRunLog({
+          account: accountId,
+          platform,
+          scope: 'manual',
+          level: 'warn',
+          message: 'Platform is not logged in',
+          detail: 'Log in in the open tab, then rerun Prepare',
+        });
         results.push({
           platform,
           ok: false,
@@ -1561,12 +1730,50 @@ async function runManualCampaign(
       }
 
       await driver.markValidated(platform, accountId);
-      await driver.compose(platform, page, buildManualCampaignInput(platform, form, assets));
+      await appendRunLog({
+        account: accountId,
+        platform,
+        scope: 'manual',
+        level: 'success',
+        message: 'Session validated',
+      });
+      await appendRunLog({
+        account: accountId,
+        platform,
+        scope: 'manual',
+        level: 'info',
+        message: 'Opening composer and filling form',
+      });
+      const input = buildManualCampaignInput(platform, form, assets);
+      const inputWithLogger =
+        typeof input === 'object' && input !== null
+          ? {
+              ...input,
+              onLog: (message: string, detail?: string) => {
+                void appendRunLog({
+                  account: accountId,
+                  platform,
+                  scope: 'manual',
+                  level: 'info',
+                  message,
+                  ...(detail !== undefined && { detail }),
+                });
+              },
+            }
+          : input;
+      await driver.compose(platform, page, inputWithLogger);
       results.push({
         platform,
         ok: true,
         status: 'prepared',
         detail: 'Form filled - submit manually in browser tab',
+      });
+      await appendRunLog({
+        account: accountId,
+        platform,
+        scope: 'manual',
+        level: 'success',
+        message: 'Form filled; waiting for manual submit',
       });
     } catch (err) {
       results.push({
@@ -1575,10 +1782,25 @@ async function runManualCampaign(
         status: 'failed',
         error: err instanceof Error ? err.message : String(err),
       });
+      await appendRunLog({
+        account: accountId,
+        platform,
+        scope: 'manual',
+        level: 'error',
+        message: 'Manual prepare failed',
+        detail: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
   await appendHistory(historyFromResults(results, accountId, preview));
+  await appendRunLog({
+    account: accountId,
+    scope: 'manual',
+    level: results.every((result) => result.ok) ? 'success' : 'warn',
+    message: 'Manual prepare finished',
+    detail: `${results.filter((result) => result.ok).length}/${results.length} prepared`,
+  });
   return { ok: results.every((result) => result.ok), results };
 }
 
@@ -2066,6 +2288,21 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/api/logs') {
+    const account = url.searchParams.get('account')?.trim() || undefined;
+    sendJson(res, 200, {
+      ok: true,
+      entries: runLogsForClient(await loadRunLog(), account),
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/logs/clear') {
+    await clearRunLog();
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/queue') {
     const account = url.searchParams.get('account')?.trim() || undefined;
     const queue = await loadQueue();
@@ -2311,6 +2548,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   try {
     await route(req, res);
   } catch (err) {
+    void appendRunLog({
+      scope: 'system',
+      level: 'error',
+      message: `${req.method ?? 'REQUEST'} ${req.url ?? ''} failed`,
+      detail: err instanceof Error ? err.message : String(err),
+    });
     sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 }

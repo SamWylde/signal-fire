@@ -16,6 +16,7 @@ export interface LinkedInComposeInput {
   shareIntro?: string;
   /** When true, executes all steps but skips the final publish/post click */
   dryRun?: boolean;
+  onLog?: (message: string, detail?: string) => void;
 }
 
 export interface LinkedInComposeResult {
@@ -23,6 +24,32 @@ export interface LinkedInComposeResult {
   /** Set to true when dryRun mode was active and the final submit was skipped */
   dryRun?: boolean;
   success?: boolean;
+}
+
+function logLinkedIn(input: LinkedInComposeInput, message: string, detail?: string): void {
+  input.onLog?.(message, detail);
+}
+
+export function extractLinkedInCompanyIdFromUrl(pageUrl: string | undefined): string | undefined {
+  if (pageUrl === undefined || pageUrl.trim().length === 0) return undefined;
+  try {
+    const parsed = new URL(pageUrl);
+    if (!parsed.hostname.endsWith('linkedin.com')) return undefined;
+    const match = parsed.pathname.match(/^\/company\/([^/]+)/);
+    const companyId = match?.[1]?.trim();
+    if (companyId === undefined || !/^\d+$/.test(companyId)) return undefined;
+    return companyId;
+  } catch {
+    return undefined;
+  }
+}
+
+function withCompanyIdFromUrl(input: LinkedInComposeInput): LinkedInComposeInput {
+  if (input.linkedinCompanyId !== undefined && input.linkedinCompanyId.trim().length > 0) {
+    return input;
+  }
+  const companyId = extractLinkedInCompanyIdFromUrl(input.companyPageUrl);
+  return companyId !== undefined ? { ...input, linkedinCompanyId: companyId } : input;
 }
 
 async function collectFeedPostUrns(page: Page): Promise<string[]> {
@@ -51,6 +78,7 @@ export function getCompanyPageCandidateUrls(pageUrl: string): string[] {
   const slug = match[1] as string;
   return [
     original,
+    `${parsed.origin}/company/${slug}/admin/page-posts/published/?share=true`,
     `${parsed.origin}/company/${slug}/admin/`,
     `${parsed.origin}/company/${slug}/admin/dashboard/`,
     `${parsed.origin}/company/${slug}/admin/feed/posts/`,
@@ -194,6 +222,7 @@ async function createPostViaDirectUrl(
   const { mediumMs, longMs } = LINKEDIN.timeouts;
   const resolved = resolveLinkedInPostUrl(input);
 
+  logLinkedIn(input, 'Opening LinkedIn composer URL', resolved.url);
   await page.goto(resolved.url, { waitUntil: 'domcontentloaded' });
   await jitterSleep(1500, 0.6);
 
@@ -201,16 +230,19 @@ async function createPostViaDirectUrl(
 
   if (resolved.type === 'post') {
     // Company-share short post flow
+    logLinkedIn(input, 'Looking for LinkedIn company share editor');
     let editorLocator = page.locator(LINKEDIN.selectors.companyShare.textEditor).first();
     const editorVisible = await isLocatorVisible(editorLocator, mediumMs);
     if (!editorVisible) {
       editorLocator = page.locator(LINKEDIN.selectors.composer.textEditorAria).first();
     }
 
+    logLinkedIn(input, 'Typing LinkedIn post text');
     await humanClick(page, editorLocator);
     await humanType(editorLocator, clampedText);
 
     if (input.dryRun) {
+      logLinkedIn(input, 'LinkedIn post ready for manual submit');
       process.stderr.write('[linkedin] dry-run: would click "Post" to submit\n');
       return { success: true, dryRun: true } as LinkedInComposeResult;
     }
@@ -245,6 +277,7 @@ async function createPostViaDirectUrl(
 
   // Article flow — two stages
   // Stage 1: article editor page
+  logLinkedIn(input, 'Waiting for LinkedIn article editor');
   await page.locator(LINKEDIN.selectors.article.titleTextarea).first().waitFor({
     state: 'visible',
     timeout: mediumMs,
@@ -257,10 +290,12 @@ async function createPostViaDirectUrl(
   }
 
   const bodyLocator = page.locator(LINKEDIN.selectors.article.bodyEditor).first();
+  logLinkedIn(input, 'Typing LinkedIn article body');
   await humanClick(page, bodyLocator);
   await humanType(bodyLocator, clampedText);
 
   await jitterSleep(800, 0.4);
+  logLinkedIn(input, 'Opening LinkedIn article share modal');
   await humanClick(page, page.locator(LINKEDIN.selectors.article.nextButton).first());
 
   // Stage 2: share modal
@@ -277,6 +312,7 @@ async function createPostViaDirectUrl(
   }
 
   if (input.dryRun) {
+    logLinkedIn(input, 'LinkedIn article ready for manual submit');
     process.stderr.write('[linkedin] dry-run: would click "Publish" to submit\n');
     return { success: true, dryRun: true } as LinkedInComposeResult;
   }
@@ -290,13 +326,30 @@ export async function createPost(
   page: Page,
   input: LinkedInComposeInput,
 ): Promise<LinkedInComposeResult> {
+  const originalCompanyId = input.linkedinCompanyId;
+  const resolvedInput = withCompanyIdFromUrl(input);
+  if (
+    originalCompanyId === undefined &&
+    resolvedInput.linkedinCompanyId !== undefined &&
+    resolvedInput.companyPageUrl !== undefined
+  ) {
+    logLinkedIn(
+      resolvedInput,
+      'Using LinkedIn company ID from company URL',
+      resolvedInput.linkedinCompanyId,
+    );
+  }
   // When a numeric/slug company ID is provided, use the direct-URL composer flow
-  if (input.linkedinCompanyId !== undefined && input.linkedinCompanyId.trim().length > 0) {
-    return createPostViaDirectUrl(page, input);
+  if (
+    resolvedInput.linkedinCompanyId !== undefined &&
+    resolvedInput.linkedinCompanyId.trim().length > 0
+  ) {
+    return createPostViaDirectUrl(page, resolvedInput);
   }
 
   const { shortMs, mediumMs, longMs } = LINKEDIN.timeouts;
-  const target = input.target ?? (input.companyPageUrl !== undefined ? 'company' : 'profile');
+  const target =
+    resolvedInput.target ?? (resolvedInput.companyPageUrl !== undefined ? 'company' : 'profile');
 
   const clickTrigger = async (): Promise<boolean> =>
     clickFirstVisible(
@@ -314,16 +367,21 @@ export async function createPost(
   let triggerClicked = false;
 
   if (target === 'company') {
-    if (input.companyPageUrl === undefined || input.companyPageUrl.trim().length === 0) {
+    if (
+      resolvedInput.companyPageUrl === undefined ||
+      resolvedInput.companyPageUrl.trim().length === 0
+    ) {
       throw new Error('LinkedIn company page URL is required for company page posts');
     }
 
     const errors: string[] = [];
-    for (const url of getCompanyPageCandidateUrls(input.companyPageUrl)) {
+    for (const url of getCompanyPageCandidateUrls(resolvedInput.companyPageUrl)) {
       try {
+        logLinkedIn(resolvedInput, 'Trying LinkedIn company page URL', url);
         await page.goto(url, { waitUntil: 'domcontentloaded' });
         await jitterSleep(1500, 0.6);
         knownFeedUrns = await collectFeedPostUrns(page);
+        logLinkedIn(resolvedInput, 'Looking for LinkedIn company Start/Create post button');
         triggerClicked = await clickTrigger();
         if (triggerClicked) break;
       } catch (err) {
@@ -335,9 +393,11 @@ export async function createPost(
       throw new Error(`Could not open LinkedIn company page composer: ${errors.join(' | ')}`);
     }
   } else {
+    logLinkedIn(resolvedInput, 'Opening LinkedIn feed');
     await page.goto(LINKEDIN.urls.home, { waitUntil: 'domcontentloaded' });
     await jitterSleep(1500, 0.6);
     knownFeedUrns = await collectFeedPostUrns(page);
+    logLinkedIn(resolvedInput, 'Looking for LinkedIn Start a post button');
     triggerClicked = await clickTrigger();
   }
 
@@ -371,7 +431,7 @@ export async function createPost(
   }
   await jitterSleep(800, 0.5);
 
-  const clampedText = input.text.slice(0, LINKEDIN.limits.maxPostLength);
+  const clampedText = resolvedInput.text.slice(0, LINKEDIN.limits.maxPostLength);
 
   let editorLocator = page.locator(LINKEDIN.selectors.composer.textEditorAria).first();
   const editorVisible = await isLocatorVisible(editorLocator, shortMs);
@@ -379,10 +439,11 @@ export async function createPost(
     editorLocator = page.locator(LINKEDIN.selectors.composer.textEditor).first();
   }
 
+  logLinkedIn(resolvedInput, 'Typing LinkedIn composer text');
   await humanClick(page, editorLocator);
   await humanType(editorLocator, clampedText);
 
-  if (input.imagePath !== undefined) {
+  if (resolvedInput.imagePath !== undefined) {
     try {
       await humanClick(page, page.locator(LINKEDIN.selectors.composer.imageButtonAria).first());
     } catch {
@@ -390,7 +451,7 @@ export async function createPost(
     }
 
     const fileInput = page.locator(LINKEDIN.selectors.composer.fileInput).first();
-    await fileInput.setInputFiles(input.imagePath);
+    await fileInput.setInputFiles(resolvedInput.imagePath);
 
     await page
       .locator(LINKEDIN.selectors.composer.imagePreview)
@@ -425,7 +486,8 @@ export async function createPost(
     { timeout: mediumMs },
   );
 
-  if (input.dryRun) {
+  if (resolvedInput.dryRun) {
+    logLinkedIn(resolvedInput, 'LinkedIn post ready for manual submit');
     process.stderr.write('[linkedin] dry-run: would click "Post" to submit\n');
     return { success: true, dryRun: true } as LinkedInComposeResult;
   }

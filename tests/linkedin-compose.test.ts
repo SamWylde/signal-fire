@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { getCompanyPageCandidateUrls } from '../src/platforms/linkedin/compose.js';
+import {
+  extractLinkedInCompanyIdFromUrl,
+  getCompanyPageCandidateUrls,
+} from '../src/platforms/linkedin/compose.js';
 import { LINKEDIN } from '../src/platforms/linkedin/selectors.js';
 
 describe('LinkedIn compose selectors', () => {
@@ -19,6 +22,7 @@ describe('getCompanyPageCandidateUrls', () => {
   it('adds LinkedIn company admin URLs after the provided page URL', () => {
     expect(getCompanyPageCandidateUrls('https://www.linkedin.com/company/acme/')).toEqual([
       'https://www.linkedin.com/company/acme/',
+      'https://www.linkedin.com/company/acme/admin/page-posts/published/?share=true',
       'https://www.linkedin.com/company/acme/admin/',
       'https://www.linkedin.com/company/acme/admin/dashboard/',
       'https://www.linkedin.com/company/acme/admin/feed/posts/',
@@ -28,6 +32,15 @@ describe('getCompanyPageCandidateUrls', () => {
   it('rejects non-LinkedIn company page URLs', () => {
     expect(() => getCompanyPageCandidateUrls('https://example.com/company/acme/')).toThrow(
       /linkedin\.com/i,
+    );
+  });
+
+  it('extracts numeric LinkedIn company IDs from page URLs for the direct share composer', () => {
+    expect(extractLinkedInCompanyIdFromUrl('https://www.linkedin.com/company/110105724/')).toBe(
+      '110105724',
+    );
+    expect(extractLinkedInCompanyIdFromUrl('https://www.linkedin.com/company/grantcue/')).toBe(
+      undefined,
     );
   });
 });
