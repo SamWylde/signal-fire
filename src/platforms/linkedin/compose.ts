@@ -37,7 +37,7 @@ export function extractLinkedInCompanyIdFromUrl(pageUrl: string | undefined): st
     if (!parsed.hostname.endsWith('linkedin.com')) return undefined;
     const match = parsed.pathname.match(/^\/company\/([^/]+)/);
     const companyId = match?.[1]?.trim();
-    if (companyId === undefined || !/^\d+$/.test(companyId)) return undefined;
+    if (companyId === undefined || !/^[A-Za-z0-9_-]+$/.test(companyId)) return undefined;
     return companyId;
   } catch {
     return undefined;
@@ -206,6 +206,11 @@ export function resolveLinkedInPostUrl(input: LinkedInComposeInput): {
   }
   // article
   if (isCompany) {
+    if (!/^\d+$/.test(companyId)) {
+      throw new Error(
+        'LinkedIn company article posts require the numeric LinkedIn Company ID; short company posts can use the page URL slug',
+      );
+    }
     return {
       url: `https://www.linkedin.com/article/new/?author=urn%3Ali%3Afsd_company%3A${encodeURIComponent(companyId)}`,
       type: 'article',
