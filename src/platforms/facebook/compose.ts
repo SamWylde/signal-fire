@@ -256,25 +256,25 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
     await jitterSleep(1500, 0.5);
   }
 
-  // --- Step 6: Dry-run guard: stop before clicking Next if dryRun is true ---
-  if (input.dryRun === true) {
-    logFacebook(input, 'Facebook post ready for manual submit');
-    console.log(
-      '[facebook] dry-run: typed content but did not click Next or Post; modal stays open for inspection',
-    );
-    return;
-  }
-
-  // --- Step 7: Click Next to advance to Stage 2 (Post settings) ---
+  // --- Step 6: Click Next to advance to Stage 2 (Post settings) ---
   const nextButton = page.locator(FACEBOOK.selectors.composer.nextButton).first();
   await nextButton.waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
   await humanClick(page, nextButton);
 
-  // --- Step 8: Wait for Stage 2 settings dialog ---
+  // --- Step 7: Wait for Stage 2 settings dialog ---
   await page
     .locator(FACEBOOK.selectors.composer.settingsDialog)
     .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
   await jitterSleep(600, 0.4);
+
+  // --- Step 8: Dry-run guard — stop here so the user only needs to click Post ---
+  if (input.dryRun === true) {
+    logFacebook(input, 'Facebook post ready for manual submit');
+    console.log(
+      '[facebook] dry-run: advanced to Post settings dialog; user just needs to click Post',
+    );
+    return;
+  }
 
   // --- Step 9: Click Post/Publish button (three-tier fallback) ---
   let postClickError: unknown = null;
