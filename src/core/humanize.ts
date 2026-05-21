@@ -77,6 +77,10 @@ export interface HumanTypeOptions {
    * and kept only so older call sites can continue passing { naturalCadence: true }.
    */
   naturalCadence?: boolean;
+  /**
+   * Higher values type faster. 1 is the current default cadence, 2 is twice as fast.
+   */
+  typingSpeedMultiplier?: number;
   rng?: () => number;
 }
 
@@ -90,7 +94,7 @@ export interface HumanTypingStep {
   kind: HumanTypingStepKind;
 }
 
-const TYPING_SPEED_FACTOR = 0.75;
+const TYPING_SPEED_FACTOR = 0.5625;
 
 function randomFromRange(min: number, max: number, rng: () => number): number {
   return min + (max - min) * rng();
@@ -98,6 +102,15 @@ function randomFromRange(min: number, max: number, rng: () => number): number {
 
 function defaultRange(min: number, max: number): [number, number] {
   return [min * TYPING_SPEED_FACTOR, max * TYPING_SPEED_FACTOR];
+}
+
+function normalizeTypingSpeedMultiplier(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return 1;
+  return Math.min(5, Math.max(0.25, value));
+}
+
+function scaleRangeForSpeed(range: [number, number], speedMultiplier: number): [number, number] {
+  return [Math.max(1, range[0] / speedMultiplier), Math.max(1, range[1] / speedMultiplier)];
 }
 
 function biasedLowFromRange(min: number, max: number, rng: () => number): number {
@@ -127,12 +140,24 @@ function isWordBurstChar(ch: string): boolean {
 
 export function buildNaturalTypingPlan(
   text: string,
-  options?: Pick<HumanTypeOptions, 'delayRange' | 'thinkProbability' | 'thinkRange' | 'rng'>,
+  options?: Pick<
+    HumanTypeOptions,
+    'delayRange' | 'thinkProbability' | 'thinkRange' | 'typingSpeedMultiplier' | 'rng'
+  >,
 ): HumanTypingStep[] {
   const rng = options?.rng ?? Math.random;
-  const delayRange = options?.delayRange ?? defaultRange(30, 80);
+  const speedMultiplier = normalizeTypingSpeedMultiplier(options?.typingSpeedMultiplier);
+  const delayRange = scaleRangeForSpeed(
+    options?.delayRange ?? defaultRange(30, 80),
+    speedMultiplier,
+  );
   const thinkProbability = options?.thinkProbability ?? 0.05;
-  const thinkRange = options?.thinkRange ?? defaultRange(600, 1500);
+  const thinkRange = scaleRangeForSpeed(
+    options?.thinkRange ?? defaultRange(600, 1500),
+    speedMultiplier,
+  );
+  const scaledDefaultRange = (min: number, max: number): [number, number] =>
+    scaleRangeForSpeed(defaultRange(min, max), speedMultiplier);
   const steps: HumanTypingStep[] = [];
   const chars = [...text];
   let wordsUntilThink = 2 + Math.floor(rng() * 3);
@@ -147,7 +172,7 @@ export function buildNaturalTypingPlan(
         text: linebreak,
         keyDelayMs: 0,
         keyDelayMsByChar: [...linebreak].map(() => 0),
-        delayAfterMs: randomFromRange(...defaultRange(250, 650), rng),
+        delayAfterMs: randomFromRange(...scaledDefaultRange(250, 650), rng),
         kind: 'linebreak',
       });
       i += nextIsLfPair ? 2 : 1;
@@ -165,16 +190,16 @@ export function buildNaturalTypingPlan(
         text: value,
         keyDelayMs: 0,
         keyDelayMsByChar: [...value].map(() => 0),
-        delayAfterMs: randomFromRange(...defaultRange(100, 300), rng),
+        delayAfterMs: randomFromRange(...scaledDefaultRange(100, 300), rng),
         kind: 'space',
       });
       continue;
     }
 
     if (isPunctuation(ch)) {
-      let delayAfterMs = randomFromRange(...defaultRange(200, 500), rng);
+      let delayAfterMs = randomFromRange(...scaledDefaultRange(200, 500), rng);
       if (isSentenceEnd(ch) && rng() < 0.3) {
-        delayAfterMs += randomFromRange(...defaultRange(400, 900), rng);
+        delayAfterMs += randomFromRange(...scaledDefaultRange(400, 900), rng);
       }
       const keyDelayMs = biasedLowFromRange(Math.max(10, delayRange[0]), delayRange[1], rng);
       steps.push({
@@ -195,7 +220,7 @@ export function buildNaturalTypingPlan(
       i++;
     }
 
-    let delayAfterMs = rng() < 0.02 ? randomFromRange(...defaultRange(40, 80), rng) : 0;
+    let delayAfterMs = rng() < 0.02 ? randomFromRange(...scaledDefaultRange(40, 80), rng) : 0;
     wordsUntilThink--;
     if (wordsUntilThink <= 0) {
       if (rng() < thinkProbability) {

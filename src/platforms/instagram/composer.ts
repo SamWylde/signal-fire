@@ -6,6 +6,7 @@ import { INSTAGRAM } from './selectors.js';
 export interface InstagramComposeInput {
   imagePath: string; // single image path (jpg/png/webp)
   caption?: string; // clamped to INSTAGRAM.limits.maxCaptionLength internally
+  typingSpeedMultiplier?: number;
   /** When true, executes all steps but skips the final Share click. */
   dryRun?: boolean;
   onLog?: (message: string, detail?: string) => void;
@@ -276,7 +277,12 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     const captionLocator = page.locator(INSTAGRAM.selectors.composer.captionEditor).first();
     await humanClick(page, captionLocator);
     logInstagram(input, 'Typing Instagram caption');
-    await humanType(captionLocator, captionText, { naturalCadence: true });
+    await humanType(captionLocator, captionText, {
+      naturalCadence: true,
+      ...(input.typingSpeedMultiplier !== undefined && {
+        typingSpeedMultiplier: input.typingSpeedMultiplier,
+      }),
+    });
   }
 
   // --- Step 11: Click Share (three-tier fallback) ---

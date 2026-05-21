@@ -627,6 +627,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
             <span class="rule"></span>
             <span>Cap <span id="capSummary" style="font-family:var(--mono)">4/h - 20/d</span></span>
             <span class="rule"></span>
+            <span>Typing <span id="typingSpeedSummary" style="font-family:var(--mono)">200%</span></span>
+            <span class="rule"></span>
             <span>Browser <span id="browserSummary" style="font-family:var(--mono)">saved session</span></span>
             <span class="rule"></span>
             <span>Checkpoints <span style="font-family:var(--mono)">manual handoff</span></span>
@@ -1061,6 +1063,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <label>Slow motion ms
                   <input name="slowMoMs" data-save="slowMoMs" inputmode="numeric" form="campaignForm">
                 </label>
+                <label>Typing speed <span id="typingSpeedValue" class="meta-line">200%</span>
+                  <input type="range" name="typingSpeedPercent" data-save="typingSpeedPercent" min="50" max="500" step="25" value="200" form="campaignForm">
+                </label>
                 <input type="hidden" name="spoofFingerprint" value="false" form="campaignForm">
                 <label class="check-row"><input type="checkbox" id="spoofFingerprint" name="spoofFingerprint" value="true" data-save="spoofFingerprint" form="campaignForm"> Spoof browser fingerprint (stealth mode)</label>
                 <div class="meta-line">Leave off to use this computer's real browser identity. Toggling may force a one-time re-login for accounts first saved in the other mode.</div>
@@ -1483,11 +1488,19 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       document.getElementById('capSummary').textContent =
         (document.querySelector('[name="postLimitPerHour"]').value || 'off') + '/h - ' +
         (document.querySelector('[name="postLimitPerDay"]').value || 'off') + '/d';
+      updateTypingSpeedLabels();
       document.getElementById('browserSummary').textContent = useProfileEl.checked ? 'persistent profile' : 'storage state';
       updateLoginSessionStatus();
       updatePreview();
       updateTargetSelection();
       updateSchedulePreview();
+    }
+
+    function updateTypingSpeedLabels() {
+      var input = document.querySelector('[name="typingSpeedPercent"]');
+      var value = input && input.value ? input.value : '200';
+      document.getElementById('typingSpeedValue').textContent = value + '%';
+      document.getElementById('typingSpeedSummary').textContent = value + '%';
     }
 
     function updatePreview() {
@@ -1550,8 +1563,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function updateFacebookPageFields() {
       var postAsEl = document.querySelector('[name="facebookPostAs"]');
       var isPage = postAsEl && postAsEl.value === 'page';
+      var isFacebookSelected = selectedDetailPlatform === 'facebook';
       document.querySelectorAll('[data-facebook-page-only]').forEach(function(el) {
-        el.hidden = !isPage;
+        el.hidden = !isPage || !isFacebookSelected;
       });
     }
 

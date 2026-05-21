@@ -134,8 +134,19 @@ describe('buildNaturalTypingPlan', () => {
     const space = plan.find((step) => step.kind === 'space');
     const punctuation = plan.find((step) => step.kind === 'punctuation');
 
-    expect(word?.keyDelayMs).toBe(60);
-    expect(space?.delayAfterMs).toBe(225);
-    expect(punctuation?.delayAfterMs).toBe(375);
+    expect(word?.keyDelayMs).toBeCloseTo(45);
+    expect(space?.delayAfterMs).toBeCloseTo(168.75);
+    expect(punctuation?.delayAfterMs).toBeCloseTo(281.25);
+  });
+
+  it('scales default typing timings with a speed multiplier', () => {
+    const plan = buildNaturalTypingPlan('a b.', { rng: () => 1, typingSpeedMultiplier: 2 });
+    const word = plan.find((step) => step.kind === 'word');
+    const space = plan.find((step) => step.kind === 'space');
+    const punctuation = plan.find((step) => step.kind === 'punctuation');
+
+    expect(word?.keyDelayMs).toBeCloseTo(22.5);
+    expect(space?.delayAfterMs).toBeCloseTo(84.375);
+    expect(punctuation?.delayAfterMs).toBeCloseTo(140.625);
   });
 });
