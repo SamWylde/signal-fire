@@ -2851,8 +2851,16 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     document.querySelectorAll('[data-file-label]').forEach(function(input) {
       input.addEventListener('change', function() {
         updateFileLabel(input);
-        persistDraftFile(input).then(function() {
+        persistDraftFile(input).then(async function() {
           if (input.name === 'image' || input.name === 'video') {
+            var suffix = input.name === 'image' ? 'Image' : 'Video';
+            var platforms = ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'];
+            for (var i = 0; i < platforms.length; i++) {
+              var key = platforms[i] + suffix;
+              if (draftFiles[key]) {
+                await clearDraftFile(key);
+              }
+            }
             document.querySelectorAll('[data-file-label]').forEach(function(other) {
               if (other !== input) updateFileLabel(other);
             });
