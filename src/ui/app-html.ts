@@ -1241,6 +1241,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var runLogTimer = null;
     var draftFiles = {};
     var draftUploadRequests = {};
+    // Per-platform fields the user has explicitly edited. These stop mirroring the base.
+    var platformFieldEdited = {};
     var activeView = 'compose';
     var accountEl = document.getElementById('account');
     var accountMirrorEl = document.getElementById('accountMirror');
@@ -1509,7 +1511,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         activePlatform: currentPlatform(),
         targets: selectedTargets(),
         fields: fields,
-        draftFiles: draftFiles
+        draftFiles: draftFiles,
+        platformFieldEdited: platformFieldEdited
       };
     }
 
@@ -1543,6 +1546,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         if (state.targets.length > 0) selectedDetailPlatform = state.targets[0];
       }
       if (state.draftFiles && typeof state.draftFiles === 'object') draftFiles = state.draftFiles;
+      platformFieldEdited = state && state.platformFieldEdited && typeof state.platformFieldEdited === 'object'
+        ? state.platformFieldEdited
+        : {};
       if (state.fields) {
         if ('useBrowserProfile' in state.fields) useProfileEl.checked = true; // legacy state may have false; checkbox is disabled and feature is always-on
         document.querySelectorAll('[data-save]').forEach(function(input) {
@@ -2615,24 +2621,49 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       if (!target) return;
       selectedDetailPlatform = target;
       updateTargetSelection();
-      if (target !== 'content') prefillPlatformPanel(target);
+      if (target !== 'content') syncBaseToPlatforms();
     });
 
-    function prefillPlatformPanel(platform) {
-      var baseText = document.getElementById('textInput') ? document.getElementById('textInput').value : '';
+    function syncBaseToPlatforms() {
+      var baseTextEl = document.getElementById('textInput');
+      var baseText = baseTextEl ? baseTextEl.value : '';
       var baseTitleEl = document.querySelector('[name="title"]');
       var baseTitle = baseTitleEl ? baseTitleEl.value : '';
-      var platformText = document.querySelector('[name="' + platform + 'Text"]');
-      var platformTitle = document.querySelector('[name="' + platform + 'BaseTitle"]');
-      if (platformText && !platformText.value && baseText) {
-        platformText.value = baseText;
-        platformText.dispatchEvent(new Event('input', { bubbles: true }));
-      }
-      if (platformTitle && !platformTitle.value && baseTitle) {
-        platformTitle.value = baseTitle;
-        platformTitle.dispatchEvent(new Event('input', { bubbles: true }));
-      }
+      var platforms = ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'];
+      platforms.forEach(function(platform) {
+        var textKey = platform + 'Text';
+        var titleKey = platform + 'BaseTitle';
+        var textEl = document.querySelector('[name="' + textKey + '"]');
+        var titleEl = document.querySelector('[name="' + titleKey + '"]');
+        if (textEl && !platformFieldEdited[textKey] && textEl.value !== baseText) {
+          textEl.value = baseText;
+        }
+        if (titleEl && !platformFieldEdited[titleKey] && titleEl.value !== baseTitle) {
+          titleEl.value = baseTitle;
+        }
+      });
     }
+
+    ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'].forEach(function(platform) {
+      var textEl = document.querySelector('[name="' + platform + 'Text"]');
+      var titleEl = document.querySelector('[name="' + platform + 'BaseTitle"]');
+      if (textEl) {
+        textEl.addEventListener('input', function(event) {
+          if (event.isTrusted) {
+            platformFieldEdited[platform + 'Text'] = true;
+            saveStateSoon();
+          }
+        });
+      }
+      if (titleEl) {
+        titleEl.addEventListener('input', function(event) {
+          if (event.isTrusted) {
+            platformFieldEdited[platform + 'BaseTitle'] = true;
+            saveStateSoon();
+          }
+        });
+      }
+    });
 
     document.querySelectorAll('[data-file-label]').forEach(function(input) {
       input.addEventListener('change', function() {
@@ -2647,6 +2678,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         updateAll();
         saveStateSoon();
       }
+      if (event.target.matches('#textInput, [name="title"]')) {
+        syncBaseToPlatforms();
+      }
     });
     document.addEventListener('change', function(event) {
       if (event.target.matches('[data-save], input[name="targets"]')) {
@@ -2656,9 +2690,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
 
     api('/api/state')
-      .then(function(data) { applyState(data.state || {}); })
+      .then(function(data) { applyState(data.state || {}); syncBaseToPlatforms(); })
       .catch(function(err) {
         applyState({});
+        syncBaseToPlatforms();
         setBottom('Could not load saved draft state: ' + err.message, 'bad');
       })
       .then(function() {
