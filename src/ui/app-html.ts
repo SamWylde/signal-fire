@@ -726,10 +726,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                         <input name="title" data-save="title" placeholder="Used by YouTube and link previews">
                       </label>
                       <label>Text / Caption
-                        <textarea name="text" data-save="text" id="textInput" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
+                        <textarea name="text" data-save="text" id="textInput" style="min-height:220px" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
                       </label>
                       <label>HASHTAGS
-                        <textarea id="hashtagsInput" name="hashtags" data-save="hashtags" rows="2" placeholder="#hashtag1 #hashtag2"></textarea>
+                        <textarea id="hashtagsInput" name="hashtags" data-save="hashtags" rows="2" style="min-height:60px;max-height:120px" placeholder="#hashtag1 #hashtag2"></textarea>
                       </label>
                     </div>
                     <div class="caption-tools">
