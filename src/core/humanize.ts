@@ -187,7 +187,7 @@ export function buildNaturalTypingPlan(
     speedMultiplier,
   );
   const steps: HumanTypingStep[] = [];
-  const chars = [...text];
+  const chars = [...text.replace(/\r\n?/g, '\n')];
   let wordsUntilThink = 2 + Math.floor(rng() * 3);
 
   for (let i = 0; i < chars.length; ) {
