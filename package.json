@@ -61,7 +61,8 @@
     "discover-selectors": "tsx scripts/discover-selectors.ts"
   },
   "dependencies": {
-    "patchright": "^1.59.4"
+    "patchright": "^1.59.4",
+    "sharp": "^0.33.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

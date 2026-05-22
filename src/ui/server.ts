@@ -9,6 +9,7 @@ import {
   migrateLegacyAccountIds,
   sanitizeAccountId,
 } from '../core/account-id.js';
+import { type ResizedVariant, resizeImageForPlatforms } from '../core/imageResize.js';
 import {
   type BrowserContext,
   type LaunchOptions,
@@ -90,6 +91,7 @@ interface DraftFileRef {
   type?: string;
   size?: number;
   updatedAt: string;
+  platformVariants?: Record<string, Omit<ResizedVariant, 'platform'>>;
 }
 
 export interface CampaignAssets {
@@ -603,13 +605,30 @@ async function saveDraftFile(form: FormData): Promise<DraftFileRef> {
   if (filePath === undefined) throw new Error('Draft file is required');
   await pruneOldDraftFiles(kind, filePath);
 
-  return {
+  const ref: DraftFileRef = {
     path: filePath,
     name: sanitizeFileName(value.name),
     ...(value.type.length > 0 && { type: value.type }),
     size: value.size,
     updatedAt: new Date().toISOString(),
   };
+
+  if (kind === 'image') {
+    try {
+      const outputDir = path.dirname(filePath);
+      const baseName = path.basename(filePath, path.extname(filePath));
+      const variants = await resizeImageForPlatforms(filePath, outputDir, baseName);
+      const platformVariants: Record<string, Omit<ResizedVariant, 'platform'>> = {};
+      for (const v of variants) {
+        platformVariants[v.platform] = { path: v.path, name: v.name, width: v.width, height: v.height, bytes: v.bytes };
+      }
+      ref.platformVariants = platformVariants;
+    } catch (err) {
+      process.stderr.write(`[signal-fire] image resize failed: ${err}\n`);
+    }
+  }
+
+  return ref;
 }
 
 function defaultUiState(): UiState {
@@ -1713,7 +1732,13 @@ async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
   const platformImages: Partial<Record<PostingPlatform, string>> = {};
   const platformVideos: Partial<Record<PostingPlatform, string>> = {};
   for (const platform of platforms) {
-    const img = await optionalFileOrSaved(form, `${platform}Image`, platform);
+    // 1. Explicit per-platform upload wins.
+    let img = await optionalFileOrSaved(form, `${platform}Image`, platform);
+    if (img === undefined) {
+      // 2. Auto-generated variant from image resize (savedImageAuto<Platform>Path).
+      const autoKey = `imageAuto${platform.charAt(0).toUpperCase()}${platform.slice(1)}`;
+      img = await savedFilePath(form, autoKey).catch(() => undefined);
+    }
     if (img !== undefined) platformImages[platform] = img;
     const vid = await optionalFileOrSaved(form, `${platform}Video`, platform);
     if (vid !== undefined) platformVideos[platform] = vid;
