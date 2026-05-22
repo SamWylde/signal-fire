@@ -83,10 +83,12 @@ export async function isLoggedIn(page: Page): Promise<boolean> {
     // Read from the cookie store directly; no navigation needed.
     try {
       const cookies = await page.context().cookies(FACEBOOK.urls.home);
-      const cookieNames = new Set(
-        cookies.filter((cookie) => cookie.value.length > 0).map((cookie) => cookie.name),
-      );
-      if (cookieNames.has('c_user') && cookieNames.has('xs')) return true;
+      const nowSeconds = Date.now() / 1000;
+      const isValidCookie = (name: string): boolean => {
+        const cookie = cookies.find((c) => c.name === name && c.value.length > 0);
+        return cookie !== undefined && (cookie.expires === -1 || cookie.expires > nowSeconds);
+      };
+      if (isValidCookie('c_user') && isValidCookie('xs')) return true;
     } catch {
       // Cookie API unavailable; fall through to navigation-based checks.
     }

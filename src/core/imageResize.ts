@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type { PostingPlatform } from './types.js';
 
 export type PlatformImageSpec = {
   maxWidth: number;
@@ -10,7 +11,7 @@ export type PlatformImageSpec = {
   aspectRange?: [number, number];
 };
 
-export const PLATFORM_IMAGE_SPECS: Record<string, PlatformImageSpec> = {
+export const PLATFORM_IMAGE_SPECS: Record<PostingPlatform, PlatformImageSpec> = {
   linkedin:  { maxWidth: 7680, maxHeight: 4320, maxFileBytes: 5 * 1024 * 1024 },
   x:         { maxWidth: 4096, maxHeight: 4096, maxFileBytes: 5 * 1024 * 1024 },
   facebook:  { maxWidth: 2048, maxHeight: 2048, maxFileBytes: 30 * 1024 * 1024 },
