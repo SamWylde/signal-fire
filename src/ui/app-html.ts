@@ -402,6 +402,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     }
     .file-field input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+    .file-clear { position: relative; z-index: 1; margin-left: auto; flex-shrink: 0; padding: 0 5px; height: 20px; border: none; background: none; color: var(--ink-3); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 4px; }
+    .file-clear:hover { background: var(--surface); color: var(--ink-1); }
     .preview-stack {
       flex: 1;
       min-height: 0;
@@ -1716,6 +1718,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           }
         }
       }
+      var hasSaved = !!(draft && draft.name);
+      var clearBtn = input.closest('.file-field') && input.closest('.file-field').querySelector('.file-clear');
+      if (clearBtn) clearBtn.hidden = !hasSaved;
       if (input.name === 'image' && input.files && input.files[0]) {
         var url = URL.createObjectURL(input.files[0]);
         ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
@@ -1750,6 +1755,35 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       if (draftUploadRequests[input.name] !== requestId) return;
       draftFiles[input.name] = data.file;
       updateFileLabel(input);
+      saveStateSoon();
+    }
+
+    async function clearDraftFile(inputName) {
+      var draft = draftFiles[inputName];
+      if (!draft) return;
+      var qs = '?path=' + encodeURIComponent(draft.path);
+      if (draft.platformVariants) {
+        Object.values(draft.platformVariants).forEach(function(v) {
+          qs += '&variant=' + encodeURIComponent(v.path);
+        });
+      }
+      try {
+        await api('/api/draft-file' + qs, { method: 'DELETE' });
+      } catch (err) {
+        setBottom('Could not remove draft file: ' + err.message, 'bad');
+        return;
+      }
+      delete draftFiles[inputName];
+      var input = document.querySelector('[data-file-label][name="' + inputName + '"]');
+      if (input) {
+        input.value = '';
+        updateFileLabel(input);
+        if (inputName === 'image' || inputName === 'video') {
+          document.querySelectorAll('[data-file-label]').forEach(function(other) {
+            if (other !== input) updateFileLabel(other);
+          });
+        }
+      }
       saveStateSoon();
     }
 
@@ -2657,6 +2691,23 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
             saveStateSoon();
           }
         });
+      }
+    });
+
+    document.querySelectorAll('[data-file-label]').forEach(function(input) {
+      var fieldLabel = input.closest('.file-field');
+      if (fieldLabel) {
+        var clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'file-clear';
+        clearBtn.textContent = '×';
+        clearBtn.hidden = true;
+        clearBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          clearDraftFile(input.name).catch(function() {});
+        });
+        fieldLabel.appendChild(clearBtn);
       }
     });
 

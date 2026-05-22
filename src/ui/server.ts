@@ -2551,6 +2551,27 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  if (req.method === 'DELETE' && url.pathname === '/api/draft-file') {
+    const rawPath = url.searchParams.get('path') ?? '';
+    const resolvedPath = path.resolve(rawPath);
+    if (!isPathInside(getUploadRoot(), resolvedPath)) {
+      throw new Error('Draft file path is outside the signal-fire uploads folder');
+    }
+    const variantPaths = url.searchParams.getAll('variant').map((v) => path.resolve(v));
+    for (const vp of variantPaths) {
+      if (!isPathInside(getUploadRoot(), vp)) {
+        throw new Error('Draft file variant path is outside the signal-fire uploads folder');
+      }
+    }
+    for (const p of [resolvedPath, ...variantPaths]) {
+      await fs.unlink(p).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'ENOENT') throw err;
+      });
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/history') {
     const account = url.searchParams.get('account')?.trim() || undefined;
     const history = await loadHistory();
