@@ -915,7 +915,29 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <span class="pill" id="previewMode">selected</span>
               </div>
               <div class="preview-stack">
-                <article class="preview-card">
+                <article class="preview-card" data-preview-platform="linkedin">
+                  <div class="preview-top">
+                    <div class="preview-avatar" style="background:#0a66c2">in</div>
+                    <div>
+                      <div style="font-weight:750">LinkedIn</div>
+                      <div class="meta-line">post</div>
+                    </div>
+                  </div>
+                  <div id="linkedinPreviewText" class="preview-text">Your post text will appear here.</div>
+                  <div id="linkedinMediaPreview" class="media-preview">Signal Fire</div>
+                </article>
+                <article class="preview-card" data-preview-platform="x">
+                  <div class="preview-top">
+                    <div class="preview-avatar" style="background:#0a0a0a">X</div>
+                    <div>
+                      <div style="font-weight:750">X</div>
+                      <div class="meta-line">post</div>
+                    </div>
+                  </div>
+                  <div id="xPreviewText" class="preview-text">Your post text will appear here.</div>
+                  <div id="xMediaPreview" class="media-preview">Signal Fire</div>
+                </article>
+                <article class="preview-card" data-preview-platform="facebook">
                   <div class="preview-top">
                     <div class="preview-avatar" style="background:#1877f2">f</div>
                     <div>
@@ -926,7 +948,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div id="facebookPreviewText" class="preview-text">Your post text will appear here.</div>
                   <div id="facebookMediaPreview" class="media-preview">Signal Fire</div>
                 </article>
-                <article class="preview-card">
+                <article class="preview-card" data-preview-platform="instagram">
                   <div class="preview-top">
                     <div class="preview-avatar" style="background:#e1306c">IG</div>
                     <div>
@@ -936,6 +958,28 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   </div>
                   <div id="instagramMediaPreview" class="media-preview">Signal Fire</div>
                   <div id="instagramPreviewText" class="preview-text">Caption preview.</div>
+                </article>
+                <article class="preview-card" data-preview-platform="tiktok">
+                  <div class="preview-top">
+                    <div class="preview-avatar" style="background:#161823">TT</div>
+                    <div>
+                      <div style="font-weight:750">TikTok</div>
+                      <div class="meta-line">video post</div>
+                    </div>
+                  </div>
+                  <div id="tiktokMediaPreview" class="media-preview">Signal Fire</div>
+                  <div id="tiktokPreviewText" class="preview-text">Your post text will appear here.</div>
+                </article>
+                <article class="preview-card" data-preview-platform="youtube">
+                  <div class="preview-top">
+                    <div class="preview-avatar" style="background:#ff0033">YT</div>
+                    <div>
+                      <div style="font-weight:750">YouTube</div>
+                      <div class="meta-line">video upload</div>
+                    </div>
+                  </div>
+                  <div id="youtubeMediaPreview" class="media-preview">Signal Fire</div>
+                  <div id="youtubePreviewText" class="preview-text">Your post text will appear here.</div>
                 </article>
               </div>
             </section>
@@ -1600,10 +1644,29 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     }
 
     function updatePreview() {
-      var text = document.getElementById('textInput').value.trim();
+      var baseText = document.getElementById('textInput').value.trim();
       var fallback = 'Your post text will appear here.';
-      document.getElementById('facebookPreviewText').textContent = text || fallback;
-      document.getElementById('instagramPreviewText').textContent = text || 'Caption preview.';
+      var targets = selectedTargets();
+      var platformTextIds = {
+        linkedin: 'linkedinPreviewText',
+        x: 'xPreviewText',
+        facebook: 'facebookPreviewText',
+        instagram: 'instagramPreviewText',
+        tiktok: 'tiktokPreviewText',
+        youtube: 'youtubePreviewText'
+      };
+      document.querySelectorAll('[data-preview-platform]').forEach(function(card) {
+        var platform = card.dataset.previewPlatform;
+        card.hidden = targets.indexOf(platform) === -1;
+        var textId = platformTextIds[platform];
+        if (!textId) return;
+        var textEl = document.getElementById(textId);
+        if (!textEl) return;
+        var perPlatformEl = document.querySelector('[name="' + platform + 'Text"]');
+        var perPlatformText = perPlatformEl ? perPlatformEl.value.trim() : '';
+        var display = perPlatformText || baseText || fallback;
+        textEl.textContent = display;
+      });
     }
 
     function updateLinkedInArticleFields() {
@@ -1722,18 +1785,34 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       if (clearBtn) clearBtn.hidden = !hasSaved;
       if (input.name === 'image' && input.files && input.files[0]) {
         var url = URL.createObjectURL(input.files[0]);
-        ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
+        ['linkedinMediaPreview', 'xMediaPreview', 'facebookMediaPreview', 'instagramMediaPreview', 'tiktokMediaPreview', 'youtubeMediaPreview'].forEach(function(previewId) {
           var box = document.getElementById(previewId);
-          box.textContent = '';
-          box.innerHTML = '<img alt="">';
-          box.querySelector('img').src = url;
+          if (!box) return;
+          var existingImg = box.querySelector('img');
+          if (existingImg) {
+            existingImg.src = url;
+          } else {
+            while (box.firstChild) box.removeChild(box.firstChild);
+            var img = document.createElement('img');
+            img.alt = '';
+            img.src = url;
+            box.appendChild(img);
+          }
         });
       } else if (input.name === 'image' && draft && draft.path) {
-        ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
+        ['linkedinMediaPreview', 'xMediaPreview', 'facebookMediaPreview', 'instagramMediaPreview', 'tiktokMediaPreview', 'youtubeMediaPreview'].forEach(function(previewId) {
           var box = document.getElementById(previewId);
-          box.textContent = '';
-          box.innerHTML = '<img alt="">';
-          box.querySelector('img').src = '/api/draft-file?path=' + encodeURIComponent(draft.path);
+          if (!box) return;
+          var existingImg = box.querySelector('img');
+          if (existingImg) {
+            existingImg.src = '/api/draft-file?path=' + encodeURIComponent(draft.path);
+          } else {
+            while (box.firstChild) box.removeChild(box.firstChild);
+            var img = document.createElement('img');
+            img.alt = '';
+            img.src = '/api/draft-file?path=' + encodeURIComponent(draft.path);
+            box.appendChild(img);
+          }
         });
       }
     }
@@ -1774,14 +1853,17 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       }
       delete draftFiles[inputName];
       if (inputName === 'image') {
-        ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
+        ['linkedinMediaPreview', 'xMediaPreview', 'facebookMediaPreview', 'instagramMediaPreview', 'tiktokMediaPreview', 'youtubeMediaPreview'].forEach(function(previewId) {
           var box = document.getElementById(previewId);
           if (!box) return;
           var img = box.querySelector('img');
-          if (img && img.src && img.src.indexOf('blob:') === 0) {
-            URL.revokeObjectURL(img.src);
+          if (img) {
+            if (img.src && img.src.indexOf('blob:') === 0) {
+              URL.revokeObjectURL(img.src);
+            }
+            img.remove();
           }
-          box.textContent = 'Signal Fire';
+          if (!box.hasChildNodes()) box.appendChild(document.createTextNode('Signal Fire'));
         });
       }
       var input = document.querySelector('[data-file-label][name="' + inputName + '"]');
