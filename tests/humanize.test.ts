@@ -185,10 +185,10 @@ describe('buildNaturalTypingPlan', () => {
     }
   });
 
-  it('clamps typing speed multiplier at the new ceiling of 10', () => {
-    const planAt10 = buildNaturalTypingPlan('hello', { rng: () => 0.5, typingSpeedMultiplier: 10 });
+  it('clamps typing speed multiplier at the new ceiling of 20', () => {
+    const planAt20 = buildNaturalTypingPlan('hello', { rng: () => 0.5, typingSpeedMultiplier: 20 });
     const planAt50 = buildNaturalTypingPlan('hello', { rng: () => 0.5, typingSpeedMultiplier: 50 });
-    const sumA = planAt10.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
+    const sumA = planAt20.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
     const sumB = planAt50.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
     expect(sumA).toBeCloseTo(sumB, 5);
   });

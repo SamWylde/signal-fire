@@ -634,7 +634,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
             <span class="rule"></span>
             <span>Cap <span id="capSummary" style="font-family:var(--mono)">4/h - 20/d</span></span>
             <span class="rule"></span>
-            <span>Typing <span id="typingSpeedSummary" style="font-family:var(--mono)">200%</span></span>
+            <span>Typing <span id="typingSpeedSummary" style="font-family:var(--mono)">1x</span></span>
             <span class="rule"></span>
             <span>Word pause <span id="wordPauseSummary" style="font-family:var(--mono)">40ms</span></span>
             <span class="rule"></span>
@@ -1217,9 +1217,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <input name="slowMoMs" data-save="slowMoMs" inputmode="numeric" form="campaignForm">
                   <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">Pause inserted between non-typing browser actions (clicks, mouse moves, navigation). Higher values look more cautious; lower values are faster but more bot-like. Does not affect typing speed.</small>
                 </label>
-                <label>Typing speed <span id="typingSpeedValue" class="meta-line">200%</span>
-                  <input type="range" name="typingSpeedPercent" data-save="typingSpeedPercent" min="50" max="1000" step="25" value="200" form="campaignForm">
-                  <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">How fast simulated human typing runs. 100% is a slow deliberate human; 1000% is hurried. Affects per-character keystroke timing on all platforms.</small>
+                <label>Typing speed <span id="typingSpeedValue" class="meta-line">1x</span>
+                  <input type="range" name="typingSpeedPercent" data-save="typingSpeedPercent" min="1" max="20" step="1" value="1" form="campaignForm">
+                  <small style="display:block;margin-top:4px;color:#7a6a55;font-weight:400;font-size:11px;line-height:1.35">HOW FAST SIMULATED HUMAN TYPING RUNS. 1X IS A SLOW DELIBERATE HUMAN; 20X IS NEAR-INSTANT. AFFECTS PER-CHARACTER KEYSTROKE TIMING ON ALL PLATFORMS.</small>
                 </label>
                 <label>Word pause <span id="wordPauseValue" class="meta-line">40ms</span>
                   <input type="range" name="wordPauseMaxMs" data-save="wordPauseMaxMs" min="0" max="200" step="5" value="40" form="campaignForm">
@@ -1655,9 +1655,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     function updateTypingSpeedLabels() {
       var input = document.querySelector('[name="typingSpeedPercent"]');
-      var value = input && input.value ? input.value : '200';
-      document.getElementById('typingSpeedValue').textContent = value + '%';
-      document.getElementById('typingSpeedSummary').textContent = value + '%';
+      var value = input && input.value ? input.value : '1';
+      document.getElementById('typingSpeedValue').textContent = value + 'x';
+      document.getElementById('typingSpeedSummary').textContent = value + 'x';
       var pauseInput = document.querySelector('[name="wordPauseMaxMs"]');
       var pauseValue = pauseInput && pauseInput.value ? pauseInput.value : '40';
       document.getElementById('wordPauseValue').textContent = pauseValue + 'ms';

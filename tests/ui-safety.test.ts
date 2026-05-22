@@ -261,7 +261,7 @@ describe('manual campaign verification', () => {
 
   it('forces dryRun on manual campaign inputs for the verified platforms', () => {
     const form = campaignForm(['x']);
-    form.set('typingSpeedPercent', '300');
+    form.set('typingSpeedPercent', '3');
     const assets = { imagePath: 'C:\\tmp\\image.jpg' };
 
     for (const platform of ['x', 'facebook', 'linkedin', 'instagram'] as const) {
