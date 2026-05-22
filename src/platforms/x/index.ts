@@ -35,6 +35,7 @@ export async function post(input: XComposeInput, options: XPostOptions): Promise
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
+  let succeeded = false;
   try {
     // 3. Apply auth if provided
     if (auth !== undefined) {
@@ -79,8 +80,9 @@ export async function post(input: XComposeInput, options: XPostOptions): Promise
       meta: { hasMedia: !!input.mediaPaths?.length },
     });
 
+    succeeded = true;
     return tweetUrl !== undefined ? { ok: true, url: tweetUrl } : { ok: true };
   } finally {
-    await close();
+    if (!succeeded) await close();
   }
 }

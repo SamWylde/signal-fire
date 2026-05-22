@@ -38,6 +38,7 @@ export async function post(
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
+  let succeeded = false;
   try {
     // 3. Apply auth if provided
     if (auth !== undefined) {
@@ -87,8 +88,9 @@ export async function post(
       },
     });
 
+    succeeded = true;
     return result.postUrl !== undefined ? { ok: true, url: result.postUrl } : { ok: true };
   } finally {
-    await close();
+    if (!succeeded) await close();
   }
 }

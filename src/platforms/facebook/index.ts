@@ -38,6 +38,7 @@ export async function post(
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
+  let succeeded = false;
   try {
     // 3. Apply auth if provided
     if (auth !== undefined) {
@@ -80,8 +81,9 @@ export async function post(
       meta: { hasImage: !!input.imagePath, pageUrl: input.pageUrl },
     });
 
+    succeeded = true;
     return { ok: true };
   } finally {
-    await close();
+    if (!succeeded) await close();
   }
 }
