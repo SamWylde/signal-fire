@@ -51,6 +51,7 @@ export async function post(input: UploadInput, options: TikTokPostOptions): Prom
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
+  let succeeded = false;
   try {
     // 4. Apply auth if provided
     if (auth !== undefined) {
@@ -93,8 +94,9 @@ export async function post(input: UploadInput, options: TikTokPostOptions): Prom
       meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
     });
 
+    succeeded = true;
     return { ok: true };
   } finally {
-    await close();
+    if (!succeeded) await close();
   }
 }
