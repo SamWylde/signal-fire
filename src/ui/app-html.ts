@@ -743,14 +743,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TITLE
                       <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="two">
-                      <label>IMAGE
-                        <div class="file-field"><input type="file" name="linkedinImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
-                      </label>
-                      <label>VIDEO
-                        <div class="file-field"><input type="file" name="linkedinVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
-                      </label>
-                    </div>
+                    <label class="file-field"><input type="file" name="linkedinImage" form="campaignForm" accept="image/*" data-file-label="linkedinImageFileName"><span>Image</span><span id="linkedinImageFileName" class="file-name">No file selected</span></label>
+                    <label class="file-field"><input type="file" name="linkedinVideo" form="campaignForm" accept="video/*" data-file-label="linkedinVideoFileName"><span>Video</span><span id="linkedinVideoFileName" class="file-name">No file selected</span></label>
                     <div class="two">
                       <label>LinkedIn Target
                         <select name="linkedinTarget" data-save="linkedinTarget">
@@ -790,14 +784,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TITLE
                       <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="two">
-                      <label>IMAGE
-                        <div class="file-field"><input type="file" name="xImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
-                      </label>
-                      <label>VIDEO
-                        <div class="file-field"><input type="file" name="xVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
-                      </label>
-                    </div>
+                    <label class="file-field"><input type="file" name="xImage" form="campaignForm" accept="image/*" data-file-label="xImageFileName"><span>Image</span><span id="xImageFileName" class="file-name">No file selected</span></label>
+                    <label class="file-field"><input type="file" name="xVideo" form="campaignForm" accept="video/*" data-file-label="xVideoFileName"><span>Video</span><span id="xVideoFileName" class="file-name">No file selected</span></label>
                     <div class="two">
                       <label>X Community
                         <input name="communityName" data-save="communityName">
@@ -818,14 +806,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TITLE
                       <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="two">
-                      <label>IMAGE
-                        <div class="file-field"><input type="file" name="facebookImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
-                      </label>
-                      <label>VIDEO
-                        <div class="file-field"><input type="file" name="facebookVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
-                      </label>
-                    </div>
+                    <label class="file-field"><input type="file" name="facebookImage" form="campaignForm" accept="image/*" data-file-label="facebookImageFileName"><span>Image</span><span id="facebookImageFileName" class="file-name">No file selected</span></label>
+                    <label class="file-field"><input type="file" name="facebookVideo" form="campaignForm" accept="video/*" data-file-label="facebookVideoFileName"><span>Video</span><span id="facebookVideoFileName" class="file-name">No file selected</span></label>
                     <label>Facebook Page URL
                       <input name="pageUrl" data-save="pageUrl" placeholder="https://www.facebook.com/your-page">
                     </label>
@@ -850,14 +832,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TITLE
                       <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="two">
-                      <label>IMAGE
-                        <div class="file-field"><input type="file" name="instagramImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
-                      </label>
-                      <label>VIDEO
-                        <div class="file-field"><input type="file" name="instagramVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
-                      </label>
-                    </div>
+                    <label class="file-field"><input type="file" name="instagramImage" form="campaignForm" accept="image/*" data-file-label="instagramImageFileName"><span>Image</span><span id="instagramImageFileName" class="file-name">No file selected</span></label>
+                    <label class="file-field"><input type="file" name="instagramVideo" form="campaignForm" accept="video/*" data-file-label="instagramVideoFileName"><span>Video</span><span id="instagramVideoFileName" class="file-name">No file selected</span></label>
                   </div>
                 </div>
 
@@ -870,14 +846,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TITLE
                       <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="two">
-                      <label>IMAGE
-                        <div class="file-field"><input type="file" name="tiktokImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
-                      </label>
-                      <label>VIDEO
-                        <div class="file-field"><input type="file" name="tiktokVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
-                      </label>
-                    </div>
+                    <label class="file-field"><input type="file" name="tiktokImage" form="campaignForm" accept="image/*" data-file-label="tiktokImageFileName"><span>Image</span><span id="tiktokImageFileName" class="file-name">No file selected</span></label>
+                    <label class="file-field"><input type="file" name="tiktokVideo" form="campaignForm" accept="video/*" data-file-label="tiktokVideoFileName"><span>Video</span><span id="tiktokVideoFileName" class="file-name">No file selected</span></label>
                     <div class="two">
                       <label>TikTok Visibility
                         <select name="tiktokVisibility" data-save="tiktokVisibility">
@@ -902,14 +872,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TITLE
                       <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="two">
-                      <label>IMAGE
-                        <div class="file-field"><input type="file" name="youtubeImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
-                      </label>
-                      <label>VIDEO
-                        <div class="file-field"><input type="file" name="youtubeVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
-                      </label>
-                    </div>
+                    <label class="file-field"><input type="file" name="youtubeImage" form="campaignForm" accept="image/*" data-file-label="youtubeImageFileName"><span>Image</span><span id="youtubeImageFileName" class="file-name">No file selected</span></label>
+                    <label class="file-field"><input type="file" name="youtubeVideo" form="campaignForm" accept="video/*" data-file-label="youtubeVideoFileName"><span>Video</span><span id="youtubeVideoFileName" class="file-name">No file selected</span></label>
                     <div class="two">
                       <label>YouTube Visibility
                         <select name="youtubeVisibility" data-save="youtubeVisibility">
@@ -1724,12 +1688,23 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var id = input.dataset.fileLabel;
       if (!id) return;
       var label = document.getElementById(id);
-      var draft = draftFiles[input.name];
-      label.textContent = input.files && input.files.length
-        ? input.files[0].name
-        : draft && draft.name
-          ? draft.name + ' (saved)'
-          : 'No file selected';
+      if (!label) return;
+
+      if (input.files && input.files.length) {
+        label.textContent = input.files[0].name;
+      } else {
+        var draft = draftFiles[input.name];
+        if (draft && draft.name) {
+          label.textContent = draft.name + ' (saved)';
+        } else {
+          var baseKey = null;
+          var n = input.name || '';
+          if (n !== 'image' && /Image$/.test(n)) baseKey = 'image';
+          else if (n !== 'video' && /Video$/.test(n)) baseKey = 'video';
+          var baseDraft = baseKey ? draftFiles[baseKey] : null;
+          label.textContent = (baseDraft && baseDraft.name) ? baseDraft.name + ' (from base)' : 'No file selected';
+        }
+      }
       if (input.name === 'image' && input.files && input.files[0]) {
         var url = URL.createObjectURL(input.files[0]);
         ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
@@ -2668,7 +2643,13 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     document.querySelectorAll('[data-file-label]').forEach(function(input) {
       input.addEventListener('change', function() {
         updateFileLabel(input);
-        persistDraftFile(input).catch(function(err) {
+        persistDraftFile(input).then(function() {
+          if (input.name === 'image' || input.name === 'video') {
+            document.querySelectorAll('[data-file-label]').forEach(function(other) {
+              if (other !== input) updateFileLabel(other);
+            });
+          }
+        }).catch(function(err) {
           setBottom('Could not save selected file for reopening: ' + err.message, 'bad');
         });
       });
