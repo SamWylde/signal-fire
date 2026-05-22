@@ -51,52 +51,47 @@ export async function post(input: UploadInput, options: TikTokPostOptions): Prom
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
-  let succeeded = false;
+
+  // 4. Apply auth if provided
+  if (auth !== undefined) {
+    const authResult = await applyTikTokAuth(context, auth);
+    if (!authResult.ok) {
+      return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
+    }
+  }
+
+  // 5. Verify login
+  const page = context.pages()[0] ?? (await context.newPage());
+  const loggedIn = await isLoggedIn(page);
+  if (!loggedIn) {
+    return { ok: false, error: 'not-logged-in' };
+  }
+
+  // 6. Upload
   try {
-    // 4. Apply auth if provided
-    if (auth !== undefined) {
-      const authResult = await applyTikTokAuth(context, auth);
-      if (!authResult.ok) {
-        return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
-      }
-    }
-
-    // 5. Verify login
-    const page = context.pages()[0] ?? (await context.newPage());
-    const loggedIn = await isLoggedIn(page);
-    if (!loggedIn) {
-      return { ok: false, error: 'not-logged-in' };
-    }
-
-    // 6. Upload
-    try {
-      await completeUploadForm(page, input);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const debugArtifacts = await captureFailureArtifacts('tiktok', page).catch(() => undefined);
-      await recordAction('tiktok', accountId, 'post', {
-        ok: false,
-        meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
-      });
-      return {
-        ok: false,
-        error: msg,
-        ...(debugArtifacts !== undefined && { debugArtifacts }),
-      };
-    }
-
-    // 7. Mark persistent session as validated
-    await markUserDataDirValidated('tiktok', accountId);
-
-    // 8. Record success
+    await completeUploadForm(page, input);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const debugArtifacts = await captureFailureArtifacts('tiktok', page).catch(() => undefined);
     await recordAction('tiktok', accountId, 'post', {
-      ok: true,
+      ok: false,
       meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
     });
-
-    succeeded = true;
-    return { ok: true };
-  } finally {
-    if (!succeeded) await close();
+    return {
+      ok: false,
+      error: msg,
+      ...(debugArtifacts !== undefined && { debugArtifacts }),
+    };
   }
+
+  // 7. Mark persistent session as validated
+  await markUserDataDirValidated('tiktok', accountId);
+
+  // 8. Record success
+  await recordAction('tiktok', accountId, 'post', {
+    ok: true,
+    meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
+  });
+
+  return { ok: true };
 }

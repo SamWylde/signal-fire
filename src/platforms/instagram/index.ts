@@ -38,54 +38,47 @@ export async function post(
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
-  let succeeded = false;
+
+  // 3. Apply auth if provided
+  if (auth !== undefined) {
+    const authResult = await applyInstagramAuth(context, auth);
+    if (!authResult.ok) {
+      return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
+    }
+  }
+
+  // 4. Verify login
+  const page = context.pages()[0] ?? (await context.newPage());
+  const loggedIn = await isLoggedIn(page);
+  if (!loggedIn) {
+    return { ok: false, error: 'not-logged-in' };
+  }
+
+  // 5. Create post
   try {
-    // 3. Apply auth if provided
-    if (auth !== undefined) {
-      const authResult = await applyInstagramAuth(context, auth);
-      if (!authResult.ok) {
-        return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
-      }
-    }
-
-    // 4. Verify login
-    const page = context.pages()[0] ?? (await context.newPage());
-    const loggedIn = await isLoggedIn(page);
-    if (!loggedIn) {
-      return { ok: false, error: 'not-logged-in' };
-    }
-
-    // 5. Create post
-    try {
-      await createPost(page, input);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const debugArtifacts = await captureFailureArtifacts('instagram', page).catch(
-        () => undefined,
-      );
-      await recordAction('instagram', accountId, 'post', {
-        ok: false,
-        meta: { hasImage: true, captionLength: input.caption?.length ?? 0 },
-      });
-      return {
-        ok: false,
-        error: msg,
-        ...(debugArtifacts !== undefined && { debugArtifacts }),
-      };
-    }
-
-    // 6. Mark persistent session as validated
-    await markUserDataDirValidated('instagram', accountId);
-
-    // 7. Record success
+    await createPost(page, input);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const debugArtifacts = await captureFailureArtifacts('instagram', page).catch(() => undefined);
     await recordAction('instagram', accountId, 'post', {
-      ok: true,
+      ok: false,
       meta: { hasImage: true, captionLength: input.caption?.length ?? 0 },
     });
-
-    succeeded = true;
-    return { ok: true };
-  } finally {
-    if (!succeeded) await close();
+    return {
+      ok: false,
+      error: msg,
+      ...(debugArtifacts !== undefined && { debugArtifacts }),
+    };
   }
+
+  // 6. Mark persistent session as validated
+  await markUserDataDirValidated('instagram', accountId);
+
+  // 7. Record success
+  await recordAction('instagram', accountId, 'post', {
+    ok: true,
+    meta: { hasImage: true, captionLength: input.caption?.length ?? 0 },
+  });
+
+  return { ok: true };
 }

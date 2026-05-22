@@ -38,59 +38,54 @@ export async function post(
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
-  let succeeded = false;
+
+  // 3. Apply auth if provided
+  if (auth !== undefined) {
+    const authResult = await applyLinkedInAuth(context, auth);
+    if (!authResult.ok) {
+      return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
+    }
+  }
+
+  // 4. Verify login
+  const page = context.pages()[0] ?? (await context.newPage());
+  const loggedIn = await isLoggedIn(page);
+  if (!loggedIn) {
+    return { ok: false, error: 'not-logged-in' };
+  }
+
+  // 5. Create post
+  let result: { postUrl?: string };
   try {
-    // 3. Apply auth if provided
-    if (auth !== undefined) {
-      const authResult = await applyLinkedInAuth(context, auth);
-      if (!authResult.ok) {
-        return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
-      }
-    }
-
-    // 4. Verify login
-    const page = context.pages()[0] ?? (await context.newPage());
-    const loggedIn = await isLoggedIn(page);
-    if (!loggedIn) {
-      return { ok: false, error: 'not-logged-in' };
-    }
-
-    // 5. Create post
-    let result: { postUrl?: string };
-    try {
-      result = await createPost(page, input);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const debugArtifacts = await captureFailureArtifacts('linkedin', page).catch(() => undefined);
-      await recordAction('linkedin', accountId, 'post', {
-        ok: false,
-        meta: {
-          hasImage: !!input.imagePath,
-          target: input.target ?? (input.companyPageUrl !== undefined ? 'company' : 'profile'),
-        },
-      });
-      return {
-        ok: false,
-        error: msg,
-        ...(debugArtifacts !== undefined && { debugArtifacts }),
-      };
-    }
-
-    // 6. Mark persistent session as validated
-    await markUserDataDirValidated('linkedin', accountId);
-
-    // 7. Record success
+    result = await createPost(page, input);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const debugArtifacts = await captureFailureArtifacts('linkedin', page).catch(() => undefined);
     await recordAction('linkedin', accountId, 'post', {
-      ok: true,
+      ok: false,
       meta: {
         hasImage: !!input.imagePath,
         target: input.target ?? (input.companyPageUrl !== undefined ? 'company' : 'profile'),
       },
     });
-
-    succeeded = true;
-    return result.postUrl !== undefined ? { ok: true, url: result.postUrl } : { ok: true };
-  } finally {
-    if (!succeeded) await close();
+    return {
+      ok: false,
+      error: msg,
+      ...(debugArtifacts !== undefined && { debugArtifacts }),
+    };
   }
+
+  // 6. Mark persistent session as validated
+  await markUserDataDirValidated('linkedin', accountId);
+
+  // 7. Record success
+  await recordAction('linkedin', accountId, 'post', {
+    ok: true,
+    meta: {
+      hasImage: !!input.imagePath,
+      target: input.target ?? (input.companyPageUrl !== undefined ? 'company' : 'profile'),
+    },
+  });
+
+  return result.postUrl !== undefined ? { ok: true, url: result.postUrl } : { ok: true };
 }

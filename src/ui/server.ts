@@ -589,7 +589,9 @@ async function optionalFiles(form: FormData, key: string, bucket: string): Promi
   return saved;
 }
 
-async function saveDraftFile(form: FormData): Promise<{ file: DraftFileRef; imageResizeError?: { message: string } }> {
+async function saveDraftFile(
+  form: FormData,
+): Promise<{ file: DraftFileRef; imageResizeError?: { message: string } }> {
   const kind = formString(form, 'kind');
   if (kind === undefined || !['image', 'video', 'cover', 'thumbnail'].includes(kind)) {
     throw new Error('Draft file kind is required');
@@ -617,7 +619,13 @@ async function saveDraftFile(form: FormData): Promise<{ file: DraftFileRef; imag
       const variants = await resizeImageForPlatforms(filePath, outputDir, baseName);
       const platformVariants: Record<string, Omit<ResizedVariant, 'platform'>> = {};
       for (const v of variants) {
-        platformVariants[v.platform] = { path: v.path, name: v.name, width: v.width, height: v.height, bytes: v.bytes };
+        platformVariants[v.platform] = {
+          path: v.path,
+          name: v.name,
+          width: v.width,
+          height: v.height,
+          bytes: v.bytes,
+        };
       }
       ref.platformVariants = platformVariants;
     } catch (err) {
@@ -1121,7 +1129,9 @@ async function buildPostInput(
       const tiktokVideoPath = await optionalFileOrSaved(form, 'tiktokVideo', platform);
       const videoPath = tiktokVideoPath ?? (await requireFile(form, 'video', platform));
       const description =
-        formString(form, 'tiktokText') ?? formString(form, 'text') ?? formString(form, 'description');
+        formString(form, 'tiktokText') ??
+        formString(form, 'text') ??
+        formString(form, 'description');
       if (description === undefined) throw new Error('Description is required');
       const coverPath = await optionalFileOrSaved(form, 'cover', platform);
       const productId = formString(form, 'productId');
@@ -2532,7 +2542,11 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
 
   if (req.method === 'POST' && url.pathname === '/api/draft-file') {
     const { file, imageResizeError } = await saveDraftFile(await readForm(req));
-    sendJson(res, 200, { ok: true, file, ...(imageResizeError !== undefined && { imageResizeError }) });
+    sendJson(res, 200, {
+      ok: true,
+      file,
+      ...(imageResizeError !== undefined && { imageResizeError }),
+    });
     return;
   }
 

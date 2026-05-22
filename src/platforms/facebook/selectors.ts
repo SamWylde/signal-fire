@@ -59,7 +59,8 @@ export const FACEBOOK = {
       modalCloseButton: '[aria-label="Close composer dialog"][role="button"]',
       modalPrivacyTrigger: '[aria-label^="Edit privacy"][role="button"]',
       // The text editor — Lexical contenteditable, stable selector
-      textEditor: '[role="dialog"][aria-modal="true"] div[contenteditable="true"][data-lexical-editor="true"][role="textbox"]',
+      textEditor:
+        '[role="dialog"][aria-modal="true"] div[contenteditable="true"][data-lexical-editor="true"][role="textbox"]',
       modalBackgroundOptions: '[aria-label="Show background options"][role="button"]',
       modalEmoji: '[aria-label="Emoji"][role="button"]',
       modalPhotoVideo: '[aria-label="Photo/video"][role="button"]',
@@ -83,7 +84,8 @@ export const FACEBOOK = {
       // the native OS file picker.
       modalFileInput: '[role="dialog"][aria-modal="true"] input[type="file"][accept*="image"]',
       // Confirmation element that appears after successful image attach.
-      attachedMediaGroup: '[role="dialog"][aria-modal="true"] [aria-label="Attached media"][role="group"]',
+      attachedMediaGroup:
+        '[role="dialog"][aria-modal="true"] [aria-label="Attached media"][role="group"]',
 
       // Legacy fallback selectors (kept for photo/video upload path)
       dialogRole: "div[role='dialog']",

@@ -160,7 +160,12 @@ export function buildNaturalTypingPlan(
   text: string,
   options?: Pick<
     HumanTypeOptions,
-    'delayRange' | 'thinkProbability' | 'thinkRange' | 'typingSpeedMultiplier' | 'wordPauseMaxMs' | 'rng'
+    | 'delayRange'
+    | 'thinkProbability'
+    | 'thinkRange'
+    | 'typingSpeedMultiplier'
+    | 'wordPauseMaxMs'
+    | 'rng'
   >,
 ): HumanTypingStep[] {
   const rng = options?.rng ?? Math.random;
@@ -224,7 +229,12 @@ export function buildNaturalTypingPlan(
       if (isSentenceEnd(ch) && rng() < 0.3) {
         delayAfterMs += randomFromRange(...scaledDefaultRange(400, 900), rng);
       }
-      const keyDelayMs = naturalKeyDelay(Math.max(10, delayRange[0]), delayRange[1], rng, speedMultiplier);
+      const keyDelayMs = naturalKeyDelay(
+        Math.max(10, delayRange[0]),
+        delayRange[1],
+        rng,
+        speedMultiplier,
+      );
       steps.push({
         text: ch,
         keyDelayMs,

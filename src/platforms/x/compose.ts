@@ -363,7 +363,13 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
     () => composer.textAreaLocator,
   );
   logX(input, 'Typing X post text');
-  await typeAndVerifyXText(page, textAreaLocator, text, input.typingSpeedMultiplier, input.wordPauseMaxMs);
+  await typeAndVerifyXText(
+    page,
+    textAreaLocator,
+    text,
+    input.typingSpeedMultiplier,
+    input.wordPauseMaxMs,
+  );
   logX(input, 'X post text verified');
   await jitterSleep(1200, 0.4);
 

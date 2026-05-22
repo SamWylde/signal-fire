@@ -35,54 +35,49 @@ export async function post(input: XComposeInput, options: XPostOptions): Promise
   };
 
   const { context, close } = await launchBrowser(mergedLaunchOptions);
-  let succeeded = false;
+
+  // 3. Apply auth if provided
+  if (auth !== undefined) {
+    const authResult = await applyXAuth(context, auth);
+    if (!authResult.ok) {
+      return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
+    }
+  }
+
+  // 4. Verify login
+  const page = context.pages()[0] ?? (await context.newPage());
+  const loggedIn = await isLoggedIn(page);
+  if (!loggedIn) {
+    return { ok: false, error: 'not-logged-in' };
+  }
+
+  // 5. Post tweet
+  let tweetUrl: string | undefined;
   try {
-    // 3. Apply auth if provided
-    if (auth !== undefined) {
-      const authResult = await applyXAuth(context, auth);
-      if (!authResult.ok) {
-        return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
-      }
-    }
-
-    // 4. Verify login
-    const page = context.pages()[0] ?? (await context.newPage());
-    const loggedIn = await isLoggedIn(page);
-    if (!loggedIn) {
-      return { ok: false, error: 'not-logged-in' };
-    }
-
-    // 5. Post tweet
-    let tweetUrl: string | undefined;
-    try {
-      const tweet = await postTweet(page, input);
-      tweetUrl = tweet.tweetUrl;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      const debugArtifacts = await captureFailureArtifacts('x', page).catch(() => undefined);
-      await recordAction('x', accountId, 'post', {
-        ok: false,
-        meta: { hasMedia: !!input.mediaPaths?.length },
-      });
-      return {
-        ok: false,
-        error: msg,
-        ...(debugArtifacts !== undefined && { debugArtifacts }),
-      };
-    }
-
-    // 6. Mark persistent session as validated
-    await markUserDataDirValidated('x', accountId);
-
-    // 7. Record success
+    const tweet = await postTweet(page, input);
+    tweetUrl = tweet.tweetUrl;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    const debugArtifacts = await captureFailureArtifacts('x', page).catch(() => undefined);
     await recordAction('x', accountId, 'post', {
-      ok: true,
+      ok: false,
       meta: { hasMedia: !!input.mediaPaths?.length },
     });
-
-    succeeded = true;
-    return tweetUrl !== undefined ? { ok: true, url: tweetUrl } : { ok: true };
-  } finally {
-    if (!succeeded) await close();
+    return {
+      ok: false,
+      error: msg,
+      ...(debugArtifacts !== undefined && { debugArtifacts }),
+    };
   }
+
+  // 6. Mark persistent session as validated
+  await markUserDataDirValidated('x', accountId);
+
+  // 7. Record success
+  await recordAction('x', accountId, 'post', {
+    ok: true,
+    meta: { hasMedia: !!input.mediaPaths?.length },
+  });
+
+  return tweetUrl !== undefined ? { ok: true, url: tweetUrl } : { ok: true };
 }
