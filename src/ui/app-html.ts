@@ -261,11 +261,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       background: #fff;
       box-shadow: 0 0 0 1px var(--line-strong), 0 1px 2px rgba(0,0,0,.04);
     }
+    .target-row[data-active="true"] {
+      border-left: 3px solid var(--ember);
+      background: rgba(184,92,58,.08);
+    }
     .target-row input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
-    .platform-block { display: flex; flex-direction: column; }
-    .platform-panel { margin-left: 1rem; border-left: 2px solid var(--line); padding: 10px 0 10px 12px; display: flex; flex-direction: column; gap: 10px; }
-    .platform-chevron { margin-left: auto; font-size: 12px; color: var(--ink-3); transition: transform 0.15s; }
-    .platform-block[data-expanded="true"] .platform-chevron { transform: rotate(90deg); }
+    .content-row { cursor: pointer; }
     .platform-square {
       width: 22px;
       height: 22px;
@@ -647,28 +648,107 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <button class="btn ghost" type="button" data-nav-jump="accounts" style="min-height:24px;padding:0 4px">Sessions</button>
               </div>
               <div class="card target-list" id="targetList">
-                <div class="platform-block" data-platform="linkedin" data-expanded="false">
-                  <div class="target-row platform-row-toggle" data-platform="linkedin">
-                    <input type="checkbox" name="targets" value="linkedin">
-                    <div class="target-row-body">
-                      <span class="platform-square" style="background:#0a66c2">in</span>
-                      <span><span class="target-name">LinkedIn <span class="ovr-badge" data-ovr-badge="linkedin" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="linkedin">none</span></span></span>
-                      <span class="platform-chevron">&#9658;</span>
+                <div class="target-row content-row" data-detail-target="content">
+                  <div style="width:18px;height:18px;flex-shrink:0"></div>
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:var(--ink-3)">&#9998;</span>
+                    <span><span class="target-name">Content</span><span class="target-sub">Base content for all platforms</span></span>
+                  </div>
+                </div>
+                <div class="target-row" data-platform="linkedin" data-detail-target="linkedin">
+                  <input type="checkbox" name="targets" value="linkedin">
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:#0a66c2">in</span>
+                    <span><span class="target-name">LinkedIn <span class="ovr-badge" data-ovr-badge="linkedin" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="linkedin">none</span></span></span>
+                  </div>
+                </div>
+                <div class="target-row" data-platform="x" data-detail-target="x">
+                  <input type="checkbox" name="targets" value="x">
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:#0a0a0a">X</span>
+                    <span><span class="target-name">X <span class="ovr-badge" data-ovr-badge="x" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="x">none</span></span></span>
+                  </div>
+                </div>
+                <div class="target-row selected" data-platform="facebook" data-detail-target="facebook">
+                  <input type="checkbox" name="targets" value="facebook" checked>
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:#1877f2">f</span>
+                    <span><span class="target-name">Facebook <span class="mini-chip">PAGE</span> <span class="ovr-badge" data-ovr-badge="facebook" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="facebook">none</span></span></span>
+                  </div>
+                </div>
+                <div class="target-row" data-platform="instagram" data-detail-target="instagram">
+                  <input type="checkbox" name="targets" value="instagram" checked>
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:#e1306c">IG</span>
+                    <span><span class="target-name">Instagram <span class="ovr-badge" data-ovr-badge="instagram" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="instagram">none</span></span></span>
+                  </div>
+                </div>
+                <div class="target-row" data-platform="tiktok" data-detail-target="tiktok">
+                  <input type="checkbox" name="targets" value="tiktok">
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:#161823">TT</span>
+                    <span><span class="target-name">TikTok <span class="ovr-badge" data-ovr-badge="tiktok" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="tiktok">none</span></span></span>
+                  </div>
+                </div>
+                <div class="target-row" data-platform="youtube" data-detail-target="youtube">
+                  <input type="checkbox" name="targets" value="youtube">
+                  <div class="target-row-body">
+                    <span class="platform-square" style="background:#ff0033">YT</span>
+                    <span><span class="target-name">YouTube <span class="ovr-badge" data-ovr-badge="youtube" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="youtube">none</span></span></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card pad">
+                <div class="eyebrow" style="margin-bottom:10px">Posting as</div>
+                <div style="display:flex;align-items:center;gap:8px">
+                  <div class="avatar">M</div>
+                  <div style="min-width:0;flex:1">
+                    <div id="postingAccount" style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No account</div>
+                    <div style="color:var(--ink-3);font-size:11px">Workspace account</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="pane">
+              <div id="platformDetails">
+                <div data-platform-detail="content">
+                  <div class="card">
+                    <div class="card-head">
+                      <div class="eyebrow">Base caption - inherited by selected platforms</div>
+                      <div class="meta-line"><span id="charCount">0</span> chars <span id="baseCaptionCount" class="caption-count" style="margin-left:4px"></span></div>
+                    </div>
+                    <div class="caption-box">
+                      <label>Text / Caption
+                        <textarea name="text" data-save="text" id="textInput" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
+                      </label>
+                      <label>Title
+                        <input name="title" data-save="title" placeholder="Used by YouTube and link previews">
+                      </label>
+                    </div>
+                    <div class="caption-tools">
+                      <label class="file-field"><input type="file" name="image" accept="image/*" data-file-label="imageFileName"><span>Image</span><span id="imageFileName" class="file-name">No file selected</span></label>
+                      <label class="file-field"><input type="file" name="video" accept="video/*" data-file-label="videoFileName"><span>Video</span><span id="videoFileName" class="file-name">No file selected</span></label>
                     </div>
                   </div>
-                  <div class="platform-panel" data-platform-panel="linkedin" hidden>
+                </div>
+
+                <div data-platform-detail="linkedin" hidden>
+                  <div class="card pad" style="display:grid;gap:12px">
+                    <div class="eyebrow">LinkedIn overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                      <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="row" style="display:flex;gap:1rem">
-                      <label style="flex:1">IMAGE
-                        <input type="file" name="linkedinImage" form="campaignForm" accept="image/*">
+                    <div class="two">
+                      <label>IMAGE
+                        <div class="file-field"><input type="file" name="linkedinImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
                       </label>
-                      <label style="flex:1">VIDEO
-                        <input type="file" name="linkedinVideo" form="campaignForm" accept="video/*">
+                      <label>VIDEO
+                        <div class="file-field"><input type="file" name="linkedinVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
                       </label>
                     </div>
                     <div class="two">
@@ -700,28 +780,22 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     </label>
                   </div>
                 </div>
-                <div class="platform-block" data-platform="x" data-expanded="false">
-                  <div class="target-row platform-row-toggle" data-platform="x">
-                    <input type="checkbox" name="targets" value="x">
-                    <div class="target-row-body">
-                      <span class="platform-square" style="background:#0a0a0a">X</span>
-                      <span><span class="target-name">X <span class="ovr-badge" data-ovr-badge="x" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="x">none</span></span></span>
-                      <span class="platform-chevron">&#9658;</span>
-                    </div>
-                  </div>
-                  <div class="platform-panel" data-platform-panel="x" hidden>
+
+                <div data-platform-detail="x" hidden>
+                  <div class="card pad" style="display:grid;gap:12px">
+                    <div class="eyebrow">X overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="xText" data-save="xText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                      <textarea name="xText" data-save="xText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="row" style="display:flex;gap:1rem">
-                      <label style="flex:1">IMAGE
-                        <input type="file" name="xImage" form="campaignForm" accept="image/*">
+                    <div class="two">
+                      <label>IMAGE
+                        <div class="file-field"><input type="file" name="xImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
                       </label>
-                      <label style="flex:1">VIDEO
-                        <input type="file" name="xVideo" form="campaignForm" accept="video/*">
+                      <label>VIDEO
+                        <div class="file-field"><input type="file" name="xVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
                       </label>
                     </div>
                     <div class="two">
@@ -734,28 +808,22 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     </div>
                   </div>
                 </div>
-                <div class="platform-block" data-platform="facebook" data-expanded="false">
-                  <div class="target-row selected platform-row-toggle" data-platform="facebook">
-                    <input type="checkbox" name="targets" value="facebook" checked>
-                    <div class="target-row-body">
-                      <span class="platform-square" style="background:#1877f2">f</span>
-                      <span><span class="target-name">Facebook <span class="mini-chip">PAGE</span> <span class="ovr-badge" data-ovr-badge="facebook" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="facebook">none</span></span></span>
-                      <span class="platform-chevron">&#9658;</span>
-                    </div>
-                  </div>
-                  <div class="platform-panel" data-platform-panel="facebook" hidden>
+
+                <div data-platform-detail="facebook" hidden>
+                  <div class="card pad" style="display:grid;gap:12px">
+                    <div class="eyebrow">Facebook overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="facebookText" data-save="facebookText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                      <textarea name="facebookText" data-save="facebookText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="row" style="display:flex;gap:1rem">
-                      <label style="flex:1">IMAGE
-                        <input type="file" name="facebookImage" form="campaignForm" accept="image/*">
+                    <div class="two">
+                      <label>IMAGE
+                        <div class="file-field"><input type="file" name="facebookImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
                       </label>
-                      <label style="flex:1">VIDEO
-                        <input type="file" name="facebookVideo" form="campaignForm" accept="video/*">
+                      <label>VIDEO
+                        <div class="file-field"><input type="file" name="facebookVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
                       </label>
                     </div>
                     <label>Facebook Page URL
@@ -772,54 +840,42 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     </label>
                   </div>
                 </div>
-                <div class="platform-block" data-platform="instagram" data-expanded="false">
-                  <div class="target-row platform-row-toggle" data-platform="instagram">
-                    <input type="checkbox" name="targets" value="instagram" checked>
-                    <div class="target-row-body">
-                      <span class="platform-square" style="background:#e1306c">IG</span>
-                      <span><span class="target-name">Instagram <span class="ovr-badge" data-ovr-badge="instagram" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="instagram">none</span></span></span>
-                      <span class="platform-chevron">&#9658;</span>
-                    </div>
-                  </div>
-                  <div class="platform-panel" data-platform-panel="instagram" hidden>
+
+                <div data-platform-detail="instagram" hidden>
+                  <div class="card pad" style="display:grid;gap:12px">
+                    <div class="eyebrow">Instagram overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="instagramText" data-save="instagramText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                      <textarea name="instagramText" data-save="instagramText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="row" style="display:flex;gap:1rem">
-                      <label style="flex:1">IMAGE
-                        <input type="file" name="instagramImage" form="campaignForm" accept="image/*">
+                    <div class="two">
+                      <label>IMAGE
+                        <div class="file-field"><input type="file" name="instagramImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
                       </label>
-                      <label style="flex:1">VIDEO
-                        <input type="file" name="instagramVideo" form="campaignForm" accept="video/*">
+                      <label>VIDEO
+                        <div class="file-field"><input type="file" name="instagramVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
                       </label>
                     </div>
                   </div>
                 </div>
-                <div class="platform-block" data-platform="tiktok" data-expanded="false">
-                  <div class="target-row platform-row-toggle" data-platform="tiktok">
-                    <input type="checkbox" name="targets" value="tiktok">
-                    <div class="target-row-body">
-                      <span class="platform-square" style="background:#161823">TT</span>
-                      <span><span class="target-name">TikTok <span class="ovr-badge" data-ovr-badge="tiktok" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="tiktok">none</span></span></span>
-                      <span class="platform-chevron">&#9658;</span>
-                    </div>
-                  </div>
-                  <div class="platform-panel" data-platform-panel="tiktok" hidden>
+
+                <div data-platform-detail="tiktok" hidden>
+                  <div class="card pad" style="display:grid;gap:12px">
+                    <div class="eyebrow">TikTok overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                      <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="row" style="display:flex;gap:1rem">
-                      <label style="flex:1">IMAGE
-                        <input type="file" name="tiktokImage" form="campaignForm" accept="image/*">
+                    <div class="two">
+                      <label>IMAGE
+                        <div class="file-field"><input type="file" name="tiktokImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
                       </label>
-                      <label style="flex:1">VIDEO
-                        <input type="file" name="tiktokVideo" form="campaignForm" accept="video/*">
+                      <label>VIDEO
+                        <div class="file-field"><input type="file" name="tiktokVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
                       </label>
                     </div>
                     <div class="two">
@@ -836,28 +892,22 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     </div>
                   </div>
                 </div>
-                <div class="platform-block" data-platform="youtube" data-expanded="false">
-                  <div class="target-row platform-row-toggle" data-platform="youtube">
-                    <input type="checkbox" name="targets" value="youtube">
-                    <div class="target-row-body">
-                      <span class="platform-square" style="background:#ff0033">YT</span>
-                      <span><span class="target-name">YouTube <span class="ovr-badge" data-ovr-badge="youtube" hidden>OVR</span></span><span class="target-sub"><span class="status-dot none-dot"></span><span data-session-label="youtube">none</span></span></span>
-                      <span class="platform-chevron">&#9658;</span>
-                    </div>
-                  </div>
-                  <div class="platform-panel" data-platform-panel="youtube" hidden>
+
+                <div data-platform-detail="youtube" hidden>
+                  <div class="card pad" style="display:grid;gap:12px">
+                    <div class="eyebrow">YouTube overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" rows="4" placeholder="Inherits from base content"></textarea>
+                      <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
-                    <div class="row" style="display:flex;gap:1rem">
-                      <label style="flex:1">IMAGE
-                        <input type="file" name="youtubeImage" form="campaignForm" accept="image/*">
+                    <div class="two">
+                      <label>IMAGE
+                        <div class="file-field"><input type="file" name="youtubeImage" form="campaignForm" accept="image/*"><span>Choose file</span></div>
                       </label>
-                      <label style="flex:1">VIDEO
-                        <input type="file" name="youtubeVideo" form="campaignForm" accept="video/*">
+                      <label>VIDEO
+                        <div class="file-field"><input type="file" name="youtubeVideo" form="campaignForm" accept="video/*"><span>Choose file</span></div>
                       </label>
                     </div>
                     <div class="two">
@@ -876,38 +926,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                       <input name="playlist" data-save="playlist">
                     </label>
                   </div>
-                </div>
-              </div>
-
-              <div class="card pad">
-                <div class="eyebrow" style="margin-bottom:10px">Posting as</div>
-                <div style="display:flex;align-items:center;gap:8px">
-                  <div class="avatar">M</div>
-                  <div style="min-width:0;flex:1">
-                    <div id="postingAccount" style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">No account</div>
-                    <div style="color:var(--ink-3);font-size:11px">Workspace account</div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <section class="pane">
-              <div class="card">
-                <div class="card-head">
-                  <div class="eyebrow">Base caption - inherited by selected platforms</div>
-                  <div class="meta-line"><span id="charCount">0</span> chars <span id="baseCaptionCount" class="caption-count" style="margin-left:4px"></span></div>
-                </div>
-                <div class="caption-box">
-                  <label>Text / Caption
-                    <textarea name="text" data-save="text" id="textInput" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
-                  </label>
-                  <label>Title
-                    <input name="title" data-save="title" placeholder="Used by YouTube and link previews">
-                  </label>
-                </div>
-                <div class="caption-tools">
-                  <label class="file-field"><input type="file" name="image" accept="image/*" data-file-label="imageFileName"><span>Image</span><span id="imageFileName" class="file-name">No file selected</span></label>
-                  <label class="file-field"><input type="file" name="video" accept="video/*" data-file-label="videoFileName"><span>Video</span><span id="videoFileName" class="file-name">No file selected</span></label>
                 </div>
               </div>
 
@@ -1212,7 +1230,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     var CAPTION_LIMITS = { x: 280, instagram: 2200, tiktok: 2200, linkedin: 3000, youtube: 5000, facebook: 63206 };
     var activeFlowId = null;
     var saveTimer = null;
-    var selectedDetailPlatform = 'facebook';
+    var selectedDetailPlatform = 'content';
     var credentialLoadTimer = null;
     var activeFlowLookupTimer = null;
     var latestResults = [];
@@ -1680,6 +1698,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var selected = selectedDetailPlatform;
       document.querySelectorAll('.target-row').forEach(function(row) {
         row.classList.toggle('selected', row.dataset.platform === selected);
+        row.dataset.active = row.dataset.detailTarget === selected ? 'true' : 'false';
       });
       document.querySelectorAll('[data-platform-detail]').forEach(function(row) {
         var platforms = (row.dataset.platformDetail || '').split(/\s+/);
@@ -2589,20 +2608,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
     useProfileEl.addEventListener('change', function() { updateAll(); saveStateSoon(); });
     document.getElementById('targetList').addEventListener('click', function(event) {
-      var toggle = event.target.closest('.platform-row-toggle');
-      if (!toggle) return;
       if (event.target.closest('input[type="checkbox"]')) return;
-      var block = toggle.closest('.platform-block');
-      if (!block) return;
-      var platform = block.dataset.platform;
-      if (!platform) return;
-      selectedDetailPlatform = platform;
+      var row = event.target.closest('[data-detail-target]');
+      if (!row) return;
+      var target = row.dataset.detailTarget;
+      if (!target) return;
+      selectedDetailPlatform = target;
       updateTargetSelection();
-      var expanded = block.dataset.expanded === 'true';
-      block.dataset.expanded = expanded ? 'false' : 'true';
-      var panel = block.querySelector('.platform-panel');
-      if (panel) panel.hidden = expanded;
-      if (!expanded) prefillPlatformPanel(platform);
+      if (target !== 'content') prefillPlatformPanel(target);
     });
 
     function prefillPlatformPanel(platform) {
