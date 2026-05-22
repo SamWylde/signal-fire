@@ -12,12 +12,17 @@ export type PlatformImageSpec = {
 };
 
 export const PLATFORM_IMAGE_SPECS: Record<PostingPlatform, PlatformImageSpec> = {
-  linkedin:  { maxWidth: 7680, maxHeight: 4320, maxFileBytes: 5 * 1024 * 1024 },
-  x:         { maxWidth: 4096, maxHeight: 4096, maxFileBytes: 5 * 1024 * 1024 },
-  facebook:  { maxWidth: 2048, maxHeight: 2048, maxFileBytes: 30 * 1024 * 1024 },
-  instagram: { maxWidth: 1080, maxHeight: 1350, maxFileBytes: 30 * 1024 * 1024, aspectRange: [0.8, 1.91] },
-  tiktok:    { maxWidth: 4096, maxHeight: 4096, maxFileBytes: 20 * 1024 * 1024 },
-  youtube:   { maxWidth: 1920, maxHeight: 1080, maxFileBytes: 2 * 1024 * 1024 },
+  linkedin: { maxWidth: 7680, maxHeight: 4320, maxFileBytes: 5 * 1024 * 1024 },
+  x: { maxWidth: 4096, maxHeight: 4096, maxFileBytes: 5 * 1024 * 1024 },
+  facebook: { maxWidth: 2048, maxHeight: 2048, maxFileBytes: 30 * 1024 * 1024 },
+  instagram: {
+    maxWidth: 1080,
+    maxHeight: 1350,
+    maxFileBytes: 30 * 1024 * 1024,
+    aspectRange: [0.8, 1.91],
+  },
+  tiktok: { maxWidth: 4096, maxHeight: 4096, maxFileBytes: 20 * 1024 * 1024 },
+  youtube: { maxWidth: 1920, maxHeight: 1080, maxFileBytes: 2 * 1024 * 1024 },
 };
 
 export type ResizedVariant = {
@@ -105,13 +110,28 @@ async function resizeOne(
       const [minR, maxR] = spec.aspectRange;
       if (ratio < minR) {
         const targetH = Math.round(origW / minR);
-        p = p.extract({ left: 0, top: Math.max(0, Math.floor((origH - targetH) / 2)), width: origW, height: targetH });
+        p = p.extract({
+          left: 0,
+          top: Math.max(0, Math.floor((origH - targetH) / 2)),
+          width: origW,
+          height: targetH,
+        });
       } else if (ratio > maxR) {
         const targetW = Math.round(origH * maxR);
-        p = p.extract({ left: Math.max(0, Math.floor((origW - targetW) / 2)), top: 0, width: targetW, height: origH });
+        p = p.extract({
+          left: Math.max(0, Math.floor((origW - targetW) / 2)),
+          top: 0,
+          width: targetW,
+          height: origH,
+        });
       }
     }
-    p = p.resize({ width: spec.maxWidth, height: spec.maxHeight, fit: 'inside', withoutEnlargement: true });
+    p = p.resize({
+      width: spec.maxWidth,
+      height: spec.maxHeight,
+      fit: 'inside',
+      withoutEnlargement: true,
+    });
     buffer = await p.jpeg({ quality, mozjpeg: true }).toBuffer();
   }
 

@@ -196,11 +196,15 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
   await humanClick(page, textEditor);
   await jitterSleep(400, 0.4);
 
-  let focused = await textEditor.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
+  let focused = await textEditor.evaluate(
+    (el) => el === document.activeElement || el.contains(document.activeElement),
+  );
   if (!focused) {
     await textEditor.focus().catch(() => undefined);
     await jitterSleep(300, 0.4);
-    focused = await textEditor.evaluate((el) => el === document.activeElement || el.contains(document.activeElement));
+    focused = await textEditor.evaluate(
+      (el) => el === document.activeElement || el.contains(document.activeElement),
+    );
   }
   if (!focused) {
     throw new Error(
@@ -210,7 +214,9 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
 
   await humanType(textEditor, input.text, {
     naturalCadence: true,
-    ...(input.typingSpeedMultiplier !== undefined && { typingSpeedMultiplier: input.typingSpeedMultiplier }),
+    ...(input.typingSpeedMultiplier !== undefined && {
+      typingSpeedMultiplier: input.typingSpeedMultiplier,
+    }),
     ...(input.wordPauseMaxMs !== undefined && { wordPauseMaxMs: input.wordPauseMaxMs }),
   });
   await jitterSleep(500, 0.5);
@@ -231,7 +237,9 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
     // The file input is in the DOM from the moment the modal opens. setInputFiles
     // writes the file directly, skipping the native OS picker entirely.
     const fileInput = page.locator(FACEBOOK.selectors.composer.modalFileInput).first();
-    await fileInput.waitFor({ state: 'attached', timeout: FACEBOOK.timeouts.mediumMs }).catch(() => undefined);
+    await fileInput
+      .waitFor({ state: 'attached', timeout: FACEBOOK.timeouts.mediumMs })
+      .catch(() => undefined);
     try {
       await fileInput.setInputFiles(input.imagePath);
     } catch (err) {

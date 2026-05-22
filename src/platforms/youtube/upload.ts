@@ -179,7 +179,11 @@ async function fillTags(
   await tagsInput.waitFor({ state: 'visible', timeout: YOUTUBE.timeouts.shortMs });
 
   const tagsString = tags.join(',').slice(0, YOUTUBE.limits.maxTags);
-  await humanType(tagsInput, tagsString, youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs));
+  await humanType(
+    tagsInput,
+    tagsString,
+    youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs),
+  );
 }
 
 async function setThumbnail(page: Page, thumbnailPath: string): Promise<void> {
@@ -260,13 +264,21 @@ async function setVisibilityOrSchedule(
     const dateInput = page.locator(YOUTUBE.selectors.visibility.scheduleDateInput).first();
     await humanClick(page, dateInput);
     await dateInput.fill('');
-    await humanType(dateInput, dateStr, youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs));
+    await humanType(
+      dateInput,
+      dateStr,
+      youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs),
+    );
     await page.keyboard.press('Enter');
 
     const timeInput = page.locator(YOUTUBE.selectors.visibility.scheduleTimeInput).first();
     await humanClick(page, timeInput);
     await timeInput.fill('');
-    await humanType(timeInput, timeStr, youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs));
+    await humanType(
+      timeInput,
+      timeStr,
+      youtubeTypingOptions(typingSpeedMultiplier, wordPauseMaxMs),
+    );
     await page.keyboard.press('Enter');
   } else {
     const host = page.locator(YOUTUBE.selectors.visibility[visibility]).first();
@@ -443,7 +455,13 @@ export async function completeUpload(
   }
 
   // 8. Visibility / Schedule
-  await setVisibilityOrSchedule(page, visibility, schedule, input.typingSpeedMultiplier, input.wordPauseMaxMs);
+  await setVisibilityOrSchedule(
+    page,
+    visibility,
+    schedule,
+    input.typingSpeedMultiplier,
+    input.wordPauseMaxMs,
+  );
 
   // 9. Wait for upload readiness/errors before Done.
   await waitForDoneReadiness(page);

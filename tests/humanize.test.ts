@@ -156,7 +156,7 @@ describe('buildNaturalTypingPlan', () => {
   it('produces high keystroke variance across a paragraph', () => {
     let i = 0;
     const seq = [0.01, 0.5, 0.99, 0.2, 0.7, 0.04, 0.1, 0.8, 0.3, 0.6, 0.05, 0.95, 0.4, 0.15, 0.85];
-    const rng = () => seq[(i++) % seq.length] as number;
+    const rng = () => seq[i++ % seq.length] as number;
     const plan = buildNaturalTypingPlan(
       'The quick brown fox jumps over the lazy dog and the rain in Spain stays mainly on the plain.',
       { rng },
@@ -172,7 +172,11 @@ describe('buildNaturalTypingPlan', () => {
   });
 
   it('respects wordPauseMaxMs for inter-word delays', () => {
-    const plan = buildNaturalTypingPlan('a b c', { rng: () => 0.999, wordPauseMaxMs: 40, typingSpeedMultiplier: 1 });
+    const plan = buildNaturalTypingPlan('a b c', {
+      rng: () => 0.999,
+      wordPauseMaxMs: 40,
+      typingSpeedMultiplier: 1,
+    });
     for (const step of plan) {
       if (step.kind === 'space') {
         expect(step.delayAfterMs).toBeGreaterThanOrEqual(40 * 0.3 - 0.001);
