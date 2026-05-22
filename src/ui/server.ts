@@ -33,10 +33,8 @@ import {
   readMetadata,
 } from '../core/session.js';
 import type { AccountId, PostResult } from '../core/types.js';
+import { POSTING_PLATFORMS, type PostingPlatform } from '../core/types.js';
 import { REDESIGNED_APP_HTML } from './app-html.js';
-
-const POSTING_PLATFORMS = ['tiktok', 'x', 'facebook', 'linkedin', 'youtube', 'instagram'] as const;
-export type PostingPlatform = (typeof POSTING_PLATFORMS)[number];
 
 const LOGIN_URLS: Record<PostingPlatform, string> = {
   tiktok: 'https://www.tiktok.com/login',
@@ -80,8 +78,6 @@ interface UiState {
   targets?: PostingPlatform[];
   fields?: Record<string, string | boolean>;
   draftFiles?: Record<string, DraftFileRef>;
-  overrideText?: Partial<Record<PostingPlatform, string>>;
-  overrideEnabled?: Partial<Record<PostingPlatform, boolean>>;
   updatedAt?: string;
 }
 
@@ -593,7 +589,7 @@ async function optionalFiles(form: FormData, key: string, bucket: string): Promi
   return saved;
 }
 
-async function saveDraftFile(form: FormData): Promise<DraftFileRef> {
+async function saveDraftFile(form: FormData): Promise<{ file: DraftFileRef; imageResizeError?: { message: string } }> {
   const kind = formString(form, 'kind');
   if (kind === undefined || !['image', 'video', 'cover', 'thumbnail'].includes(kind)) {
     throw new Error('Draft file kind is required');
@@ -613,6 +609,7 @@ async function saveDraftFile(form: FormData): Promise<DraftFileRef> {
     updatedAt: new Date().toISOString(),
   };
 
+  let imageResizeError: { message: string } | undefined;
   if (kind === 'image') {
     try {
       const outputDir = path.dirname(filePath);
@@ -625,10 +622,11 @@ async function saveDraftFile(form: FormData): Promise<DraftFileRef> {
       ref.platformVariants = platformVariants;
     } catch (err) {
       process.stderr.write(`[signal-fire] image resize failed: ${err}\n`);
+      imageResizeError = { message: err instanceof Error ? err.message : String(err) };
     }
   }
 
-  return ref;
+  return { file: ref, ...(imageResizeError !== undefined && { imageResizeError }) };
 }
 
 function defaultUiState(): UiState {
@@ -661,8 +659,6 @@ function defaultUiState(): UiState {
       spoofFingerprint: false,
     },
     draftFiles: {},
-    overrideText: {},
-    overrideEnabled: {},
   };
 }
 
@@ -682,14 +678,6 @@ function mergeUiState(saved: UiState): UiState {
     draftFiles: {
       ...(defaults.draftFiles ?? {}),
       ...(saved.draftFiles ?? {}),
-    },
-    overrideText: {
-      ...(defaults.overrideText ?? {}),
-      ...(saved.overrideText ?? {}),
-    },
-    overrideEnabled: {
-      ...(defaults.overrideEnabled ?? {}),
-      ...(saved.overrideEnabled ?? {}),
     },
   };
 
@@ -1474,22 +1462,13 @@ function campaignTags(form: FormData): string[] {
     .filter((tag) => tag.length > 0);
 }
 
-function resolveCaption(platform: PostingPlatform, form: FormData): string | undefined {
-  const enabled = form.get(`overrideEnabled_${platform}`);
-  if (enabled === 'on' || enabled === 'true') {
-    const override = form.get(`overrideText_${platform}`);
-    if (typeof override === 'string' && override.trim().length > 0) return override.trim();
-  }
-  return textForCampaign(form);
-}
-
 function buildCampaignInput(
   platform: PostingPlatform,
   form: FormData,
   assets: CampaignAssets,
   runImmediate?: boolean,
 ): unknown {
-  const text = resolveCaption(platform, form);
+  const text = textForCampaign(form);
   const title = formString(form, 'title') ?? text?.slice(0, 100);
   const description = formString(form, 'description') ?? text;
   const schedule = runImmediate === true ? undefined : parseSchedule(formString(form, 'schedule'));
@@ -2552,8 +2531,8 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/draft-file') {
-    const file = await saveDraftFile(await readForm(req));
-    sendJson(res, 200, { ok: true, file });
+    const { file, imageResizeError } = await saveDraftFile(await readForm(req));
+    sendJson(res, 200, { ok: true, file, ...(imageResizeError !== undefined && { imageResizeError }) });
     return;
   }
 

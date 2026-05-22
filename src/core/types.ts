@@ -1,5 +1,15 @@
 import type { DebugCaptureResult } from './debug-artifacts.js';
 
+export const POSTING_PLATFORMS = [
+  'linkedin',
+  'x',
+  'facebook',
+  'instagram',
+  'tiktok',
+  'youtube',
+] as const;
+export type PostingPlatform = (typeof POSTING_PLATFORMS)[number];
+
 export type Platform =
   | 'tiktok'
   | 'x'
