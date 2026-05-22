@@ -356,6 +356,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       box-shadow: 0 0 0 3px rgba(184,92,58,.16);
     }
     textarea { min-height: 140px; resize: vertical; line-height: 1.48; }
+    .ta-caption { min-height: 220px; }
+    .ta-hashtags { min-height: 60px; max-height: 120px; }
     textarea.compact { min-height: 74px; }
     .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -726,10 +728,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                         <input name="title" data-save="title" placeholder="Used by YouTube and link previews">
                       </label>
                       <label>Text / Caption
-                        <textarea name="text" data-save="text" id="textInput" style="min-height:220px" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
+                        <textarea name="text" data-save="text" id="textInput" class="ta-caption" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
                       </label>
                       <label>HASHTAGS
-                        <textarea id="hashtagsInput" name="hashtags" data-save="hashtags" rows="2" style="min-height:60px;max-height:120px" placeholder="#hashtag1 #hashtag2"></textarea>
+                        <textarea id="hashtagsInput" name="hashtags" data-save="hashtags" rows="2" class="ta-hashtags" placeholder="#hashtag1 #hashtag2"></textarea>
                       </label>
                     </div>
                     <div class="caption-tools">
@@ -743,10 +745,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">LinkedIn overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                      <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
-                      <textarea name="linkedinHashtags" data-save="linkedinHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                      <textarea name="linkedinHashtags" data-save="linkedinHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -787,10 +789,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">X overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="xText" data-save="xText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                      <textarea name="xText" data-save="xText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
-                      <textarea name="xHashtags" data-save="xHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                      <textarea name="xHashtags" data-save="xHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -812,10 +814,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">Facebook overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="facebookText" data-save="facebookText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                      <textarea name="facebookText" data-save="facebookText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
-                      <textarea name="facebookHashtags" data-save="facebookHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                      <textarea name="facebookHashtags" data-save="facebookHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -841,10 +843,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">Instagram overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="instagramText" data-save="instagramText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                      <textarea name="instagramText" data-save="instagramText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
-                      <textarea name="instagramHashtags" data-save="instagramHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                      <textarea name="instagramHashtags" data-save="instagramHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -858,10 +860,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">TikTok overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                      <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
-                      <textarea name="tiktokHashtags" data-save="tiktokHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                      <textarea name="tiktokHashtags" data-save="tiktokHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -887,10 +889,10 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">YouTube overrides</div>
                     <label>TEXT / CAPTION
-                      <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                      <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
-                      <textarea name="youtubeHashtags" data-save="youtubeHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                      <textarea name="youtubeHashtags" data-save="youtubeHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
