@@ -593,7 +593,10 @@ async function saveDraftFile(
   form: FormData,
 ): Promise<{ file: DraftFileRef; imageResizeError?: { message: string } }> {
   const kind = formString(form, 'kind');
-  if (kind === undefined || !['image', 'video', 'cover', 'thumbnail'].includes(kind)) {
+  if (
+    kind === undefined ||
+    !['image', 'video', 'cover', 'thumbnail', 'linkedinImage', 'linkedinVideo', 'xImage', 'xVideo', 'facebookImage', 'facebookVideo', 'instagramImage', 'instagramVideo', 'tiktokImage', 'tiktokVideo', 'youtubeImage', 'youtubeVideo'].includes(kind)
+  ) {
     throw new Error('Draft file kind is required');
   }
 
