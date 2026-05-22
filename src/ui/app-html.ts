@@ -744,14 +744,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div data-platform-detail="linkedin" hidden>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">LinkedIn overrides</div>
+                    <label>TITLE
+                      <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
                     <label>TEXT / CAPTION
                       <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
                       <textarea name="linkedinHashtags" data-save="linkedinHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
-                    </label>
-                    <label>TITLE
-                      <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
                     <label class="file-field"><input type="file" name="linkedinImage" form="campaignForm" accept="image/*" data-file-label="linkedinImageFileName"><span>Image</span><span id="linkedinImageFileName" class="file-name">No file selected</span></label>
                     <label class="file-field"><input type="file" name="linkedinVideo" form="campaignForm" accept="video/*" data-file-label="linkedinVideoFileName"><span>Video</span><span id="linkedinVideoFileName" class="file-name">No file selected</span></label>
@@ -788,14 +788,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div data-platform-detail="x" hidden>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">X overrides</div>
+                    <label>TITLE
+                      <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
                     <label>TEXT / CAPTION
                       <textarea name="xText" data-save="xText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
                       <textarea name="xHashtags" data-save="xHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
-                    </label>
-                    <label>TITLE
-                      <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
                     <label class="file-field"><input type="file" name="xImage" form="campaignForm" accept="image/*" data-file-label="xImageFileName"><span>Image</span><span id="xImageFileName" class="file-name">No file selected</span></label>
                     <label class="file-field"><input type="file" name="xVideo" form="campaignForm" accept="video/*" data-file-label="xVideoFileName"><span>Video</span><span id="xVideoFileName" class="file-name">No file selected</span></label>
@@ -813,14 +813,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div data-platform-detail="facebook" hidden>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">Facebook overrides</div>
+                    <label>TITLE
+                      <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
                     <label>TEXT / CAPTION
                       <textarea name="facebookText" data-save="facebookText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
                       <textarea name="facebookHashtags" data-save="facebookHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
-                    </label>
-                    <label>TITLE
-                      <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
                     <label class="file-field"><input type="file" name="facebookImage" form="campaignForm" accept="image/*" data-file-label="facebookImageFileName"><span>Image</span><span id="facebookImageFileName" class="file-name">No file selected</span></label>
                     <label class="file-field"><input type="file" name="facebookVideo" form="campaignForm" accept="video/*" data-file-label="facebookVideoFileName"><span>Video</span><span id="facebookVideoFileName" class="file-name">No file selected</span></label>
@@ -842,14 +842,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div data-platform-detail="instagram" hidden>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">Instagram overrides</div>
+                    <label>TITLE
+                      <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
                     <label>TEXT / CAPTION
                       <textarea name="instagramText" data-save="instagramText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
                       <textarea name="instagramHashtags" data-save="instagramHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
-                    </label>
-                    <label>TITLE
-                      <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
                     <label class="file-field"><input type="file" name="instagramImage" form="campaignForm" accept="image/*" data-file-label="instagramImageFileName"><span>Image</span><span id="instagramImageFileName" class="file-name">No file selected</span></label>
                     <label class="file-field"><input type="file" name="instagramVideo" form="campaignForm" accept="video/*" data-file-label="instagramVideoFileName"><span>Video</span><span id="instagramVideoFileName" class="file-name">No file selected</span></label>
@@ -859,14 +859,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div data-platform-detail="tiktok" hidden>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">TikTok overrides</div>
+                    <label>TITLE
+                      <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
                     <label>TEXT / CAPTION
                       <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
                       <textarea name="tiktokHashtags" data-save="tiktokHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
-                    </label>
-                    <label>TITLE
-                      <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
                     <label class="file-field"><input type="file" name="tiktokImage" form="campaignForm" accept="image/*" data-file-label="tiktokImageFileName"><span>Image</span><span id="tiktokImageFileName" class="file-name">No file selected</span></label>
                     <label class="file-field"><input type="file" name="tiktokVideo" form="campaignForm" accept="video/*" data-file-label="tiktokVideoFileName"><span>Video</span><span id="tiktokVideoFileName" class="file-name">No file selected</span></label>
@@ -888,14 +888,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <div data-platform-detail="youtube" hidden>
                   <div class="card pad" style="display:grid;gap:12px">
                     <div class="eyebrow">YouTube overrides</div>
+                    <label>TITLE
+                      <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
+                    </label>
                     <label>TEXT / CAPTION
                       <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" class="ta-caption" placeholder="Inherits from base content"></textarea>
                     </label>
                     <label>HASHTAGS
                       <textarea name="youtubeHashtags" data-save="youtubeHashtags" form="campaignForm" rows="2" class="ta-hashtags" placeholder="Inherits from base hashtags"></textarea>
-                    </label>
-                    <label>TITLE
-                      <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
                     <label class="file-field"><input type="file" name="youtubeImage" form="campaignForm" accept="image/*" data-file-label="youtubeImageFileName"><span>Image</span><span id="youtubeImageFileName" class="file-name">No file selected</span></label>
                     <label class="file-field"><input type="file" name="youtubeVideo" form="campaignForm" accept="video/*" data-file-label="youtubeVideoFileName"><span>Video</span><span id="youtubeVideoFileName" class="file-name">No file selected</span></label>
