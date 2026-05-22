@@ -2306,7 +2306,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       ) {
         errors.push('Add a LinkedIn company page URL or company ID.');
       }
-      if (targets.indexOf('instagram') !== -1 && !fileSelected('image')) {
+      if (targets.indexOf('instagram') !== -1 && !fileSelected('image') && !fileSelected('instagramImage')) {
         errors.push('Choose an image for Instagram.');
       }
       if ((targets.indexOf('tiktok') !== -1 || targets.indexOf('youtube') !== -1) && !fileSelected('video')) {
