@@ -1509,7 +1509,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         formEl.querySelectorAll('input[name="targets"]').forEach(function(input) {
           input.checked = state.targets.indexOf(input.value) !== -1;
         });
-        if (state.targets.length > 0) selectedDetailPlatform = state.targets[0];
       }
       if (state.draftFiles && typeof state.draftFiles === 'object') draftFiles = state.draftFiles;
       platformFieldEdited = state && state.platformFieldEdited && typeof state.platformFieldEdited === 'object'
@@ -2742,6 +2741,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         saveStateSoon();
       }
       if (event.target.matches('#textInput, [name="title"]')) {
+        if (event.isTrusted) {
+          var textKeys = ['facebookText', 'linkedinText', 'xText', 'instagramText', 'tiktokText', 'youtubeText'];
+          var titleKeys = ['facebookBaseTitle', 'linkedinBaseTitle', 'xBaseTitle', 'instagramBaseTitle', 'tiktokBaseTitle', 'youtubeBaseTitle'];
+          var keysToReset = event.target.matches('#textInput') ? textKeys : titleKeys;
+          keysToReset.forEach(function(k) { delete platformFieldEdited[k]; });
+        }
         syncBaseToPlatforms();
       }
     });
