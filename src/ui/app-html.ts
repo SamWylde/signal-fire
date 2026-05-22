@@ -1702,7 +1702,18 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           if (n !== 'image' && /Image$/.test(n)) baseKey = 'image';
           else if (n !== 'video' && /Video$/.test(n)) baseKey = 'video';
           var baseDraft = baseKey ? draftFiles[baseKey] : null;
-          label.textContent = (baseDraft && baseDraft.name) ? baseDraft.name + ' (from base)' : 'No file selected';
+          if (baseDraft && baseDraft.name) {
+            var platformName = n.replace(/Image$|Video$/, '');
+            var variants = baseDraft.platformVariants;
+            var hasVariant = variants && variants[platformName] && variants[platformName].path;
+            if (hasVariant && baseKey === 'image') {
+              label.textContent = baseDraft.name + ' (auto-fit for ' + platformName + ')';
+            } else {
+              label.textContent = baseDraft.name + ' (from base)';
+            }
+          } else {
+            label.textContent = 'No file selected';
+          }
         }
       }
       if (input.name === 'image' && input.files && input.files[0]) {
@@ -2088,6 +2099,15 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         var fieldName = 'saved' + key.charAt(0).toUpperCase() + key.slice(1) + 'Path';
         form.set(fieldName, file.path);
       });
+      var baseImage = draftFiles.image;
+      if (baseImage && baseImage.platformVariants && typeof baseImage.platformVariants === 'object') {
+        Object.keys(baseImage.platformVariants).forEach(function(platform) {
+          var v = baseImage.platformVariants[platform];
+          if (v && v.path) {
+            form.set('savedImageAuto' + platform.charAt(0).toUpperCase() + platform.slice(1) + 'Path', v.path);
+          }
+        });
+      }
       return form;
     }
 
