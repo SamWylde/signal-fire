@@ -1300,6 +1300,11 @@ function textForCampaign(form: FormData): string | undefined {
   return formString(form, 'text') ?? formString(form, 'description') ?? formString(form, 'title');
 }
 
+function hashtagsForCampaign(form: FormData): string | undefined {
+  const value = formString(form, 'hashtags');
+  return value !== undefined && value.length > 0 ? value : undefined;
+}
+
 function parseSeconds(value: string | undefined, label: string, defaultSeconds: number): number {
   const raw = value?.trim();
   if (raw === undefined || raw.length === 0) return defaultSeconds;
@@ -1489,8 +1494,13 @@ function buildCampaignInput(
     case 'tiktok': {
       const videoPath = assets.platformVideos?.['tiktok'] ?? assets.videoPath;
       if (videoPath === undefined) throw new Error('Video is required for TikTok');
-      const tiktokDescription =
+      const tiktokHashtags = formString(form, 'tiktokHashtags') ?? hashtagsForCampaign(form);
+      const tiktokDescriptionBase =
         formString(form, 'tiktokText') ?? formString(form, 'text') ?? description;
+      const tiktokDescription =
+        tiktokDescriptionBase !== undefined && tiktokHashtags !== undefined
+          ? tiktokDescriptionBase + '\n\n' + tiktokHashtags
+          : tiktokDescriptionBase ?? (tiktokHashtags !== undefined ? tiktokHashtags : undefined);
       if (tiktokDescription === undefined)
         throw new Error('Text or description is required for TikTok');
       const productId = formString(form, 'productId');
@@ -1509,7 +1519,9 @@ function buildCampaignInput(
       };
     }
     case 'x': {
-      const xText = formString(form, 'xText') ?? text;
+      const xHashtags = formString(form, 'xHashtags') ?? hashtagsForCampaign(form);
+      const xTextBase = formString(form, 'xText') ?? text;
+      const xText = xTextBase !== undefined && xHashtags !== undefined ? xTextBase + '\n\n' + xHashtags : xTextBase;
       if (xText === undefined) throw new Error('Text is required for X');
       const mediaPaths = [assets.videoPath, assets.imagePath].filter(
         (item): item is string => item !== undefined,
@@ -1526,7 +1538,9 @@ function buildCampaignInput(
       };
     }
     case 'facebook': {
-      const facebookText = formString(form, 'facebookText') ?? text;
+      const facebookHashtags = formString(form, 'facebookHashtags') ?? hashtagsForCampaign(form);
+      const facebookTextBase = formString(form, 'facebookText') ?? text;
+      const facebookText = facebookTextBase !== undefined && facebookHashtags !== undefined ? facebookTextBase + '\n\n' + facebookHashtags : facebookTextBase;
       const pageUrl = formString(form, 'pageUrl');
       if (pageUrl === undefined) throw new Error('Facebook page URL is required');
       if (facebookText === undefined) throw new Error('Text is required for Facebook');
@@ -1557,7 +1571,9 @@ function buildCampaignInput(
       };
     }
     case 'linkedin': {
-      const linkedinText = formString(form, 'linkedinText') ?? text;
+      const linkedinHashtags = formString(form, 'linkedinHashtags') ?? hashtagsForCampaign(form);
+      const linkedinTextBase = formString(form, 'linkedinText') ?? text;
+      const linkedinText = linkedinTextBase !== undefined && linkedinHashtags !== undefined ? linkedinTextBase + '\n\n' + linkedinHashtags : linkedinTextBase;
       if (linkedinText === undefined) throw new Error('Text is required for LinkedIn');
       const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
       const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
@@ -1585,7 +1601,9 @@ function buildCampaignInput(
     }
     case 'youtube': {
       const youtubeTitle = formString(form, 'youtubeBaseTitle') ?? title;
-      const youtubeDescription = formString(form, 'youtubeText') ?? description;
+      const youtubeHashtags = formString(form, 'youtubeHashtags') ?? hashtagsForCampaign(form);
+      const youtubeDescriptionBase = formString(form, 'youtubeText') ?? description;
+      const youtubeDescription = youtubeDescriptionBase !== undefined && youtubeHashtags !== undefined ? youtubeDescriptionBase + '\n\n' + youtubeHashtags : youtubeDescriptionBase;
       const youtubeVideoPath = assets.platformVideos?.['youtube'] ?? assets.videoPath;
       if (youtubeVideoPath === undefined) throw new Error('Video is required for YouTube');
       if (youtubeTitle === undefined) throw new Error('Title is required for YouTube');
@@ -1606,7 +1624,9 @@ function buildCampaignInput(
       };
     }
     case 'instagram': {
-      const instagramCaption = formString(form, 'instagramText') ?? text;
+      const instagramHashtags = formString(form, 'instagramHashtags') ?? hashtagsForCampaign(form);
+      const instagramCaptionBase = formString(form, 'instagramText') ?? text;
+      const instagramCaption = instagramCaptionBase !== undefined && instagramHashtags !== undefined ? instagramCaptionBase + '\n\n' + instagramHashtags : instagramCaptionBase;
       const instagramImagePath = assets.platformImages?.['instagram'] ?? assets.imagePath;
       const instagramVideoPath = assets.platformVideos?.['instagram'] ?? assets.videoPath;
       if (instagramImagePath === undefined) throw new Error('Image is required for Instagram');

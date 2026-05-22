@@ -722,11 +722,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                       <div class="meta-line"><span id="charCount">0</span> chars <span id="baseCaptionCount" class="caption-count" style="margin-left:4px"></span></div>
                     </div>
                     <div class="caption-box">
+                      <label>Title
+                        <input name="title" data-save="title" placeholder="Used by YouTube and link previews">
+                      </label>
                       <label>Text / Caption
                         <textarea name="text" data-save="text" id="textInput" placeholder="Write the post once. Use platform fields below for overrides."></textarea>
                       </label>
-                      <label>Title
-                        <input name="title" data-save="title" placeholder="Used by YouTube and link previews">
+                      <label>HASHTAGS
+                        <textarea id="hashtagsInput" name="hashtags" data-save="hashtags" rows="2" placeholder="#hashtag1 #hashtag2"></textarea>
                       </label>
                     </div>
                     <div class="caption-tools">
@@ -741,6 +744,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <div class="eyebrow">LinkedIn overrides</div>
                     <label>TEXT / CAPTION
                       <textarea name="linkedinText" data-save="linkedinText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>HASHTAGS
+                      <textarea name="linkedinHashtags" data-save="linkedinHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="linkedinBaseTitle" data-save="linkedinBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -783,6 +789,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TEXT / CAPTION
                       <textarea name="xText" data-save="xText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
+                    <label>HASHTAGS
+                      <textarea name="xHashtags" data-save="xHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                    </label>
                     <label>TITLE
                       <input type="text" name="xBaseTitle" data-save="xBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
@@ -804,6 +813,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <div class="eyebrow">Facebook overrides</div>
                     <label>TEXT / CAPTION
                       <textarea name="facebookText" data-save="facebookText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>HASHTAGS
+                      <textarea name="facebookHashtags" data-save="facebookHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="facebookBaseTitle" data-save="facebookBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -831,6 +843,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <label>TEXT / CAPTION
                       <textarea name="instagramText" data-save="instagramText" form="campaignForm" placeholder="Inherits from base content"></textarea>
                     </label>
+                    <label>HASHTAGS
+                      <textarea name="instagramHashtags" data-save="instagramHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
+                    </label>
                     <label>TITLE
                       <input type="text" name="instagramBaseTitle" data-save="instagramBaseTitle" form="campaignForm" placeholder="Inherits from base content">
                     </label>
@@ -844,6 +859,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <div class="eyebrow">TikTok overrides</div>
                     <label>TEXT / CAPTION
                       <textarea name="tiktokText" data-save="tiktokText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>HASHTAGS
+                      <textarea name="tiktokHashtags" data-save="tiktokHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="tiktokBaseTitle" data-save="tiktokBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -870,6 +888,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                     <div class="eyebrow">YouTube overrides</div>
                     <label>TEXT / CAPTION
                       <textarea name="youtubeText" data-save="youtubeText" form="campaignForm" placeholder="Inherits from base content"></textarea>
+                    </label>
+                    <label>HASHTAGS
+                      <textarea name="youtubeHashtags" data-save="youtubeHashtags" form="campaignForm" rows="2" placeholder="Inherits from base hashtags"></textarea>
                     </label>
                     <label>TITLE
                       <input type="text" name="youtubeBaseTitle" data-save="youtubeBaseTitle" form="campaignForm" placeholder="Inherits from base content">
@@ -1645,6 +1666,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     function updatePreview() {
       var baseText = document.getElementById('textInput').value.trim();
+      var baseHashtagsEl = document.getElementById('hashtagsInput');
+      var baseHashtags = baseHashtagsEl ? baseHashtagsEl.value.trim() : '';
       var fallback = 'Your post text will appear here.';
       var targets = selectedTargets();
       var platformTextIds = {
@@ -1664,7 +1687,11 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         if (!textEl) return;
         var perPlatformEl = document.querySelector('[name="' + platform + 'Text"]');
         var perPlatformText = perPlatformEl ? perPlatformEl.value.trim() : '';
-        var display = perPlatformText || baseText || fallback;
+        var perPlatformHashtagsEl = document.querySelector('[name="' + platform + 'Hashtags"]');
+        var perPlatformHashtags = perPlatformHashtagsEl ? perPlatformHashtagsEl.value.trim() : '';
+        var effectiveText = perPlatformText || baseText;
+        var effectiveHashtags = perPlatformHashtags || baseHashtags;
+        var display = effectiveText ? (effectiveHashtags ? effectiveText + '\n\n' + effectiveHashtags : effectiveText) : (effectiveHashtags || fallback);
         textEl.textContent = display;
       });
     }
@@ -2750,17 +2777,24 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       var baseText = baseTextEl ? baseTextEl.value : '';
       var baseTitleEl = document.querySelector('[name="title"]');
       var baseTitle = baseTitleEl ? baseTitleEl.value : '';
+      var baseHashtagsEl = document.getElementById('hashtagsInput');
+      var baseHashtags = baseHashtagsEl ? baseHashtagsEl.value : '';
       var platforms = ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'];
       platforms.forEach(function(platform) {
         var textKey = platform + 'Text';
         var titleKey = platform + 'BaseTitle';
+        var hashtagsKey = platform + 'Hashtags';
         var textEl = document.querySelector('[name="' + textKey + '"]');
         var titleEl = document.querySelector('[name="' + titleKey + '"]');
+        var hashtagsEl = document.querySelector('[name="' + hashtagsKey + '"]');
         if (textEl && !platformFieldEdited[textKey] && textEl.value !== baseText) {
           textEl.value = baseText;
         }
         if (titleEl && !platformFieldEdited[titleKey] && titleEl.value !== baseTitle) {
           titleEl.value = baseTitle;
+        }
+        if (hashtagsEl && !platformFieldEdited[hashtagsKey] && hashtagsEl.value !== baseHashtags) {
+          hashtagsEl.value = baseHashtags;
         }
       });
     }
@@ -2768,6 +2802,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'].forEach(function(platform) {
       var textEl = document.querySelector('[name="' + platform + 'Text"]');
       var titleEl = document.querySelector('[name="' + platform + 'BaseTitle"]');
+      var hashtagsEl = document.querySelector('[name="' + platform + 'Hashtags"]');
       if (textEl) {
         textEl.addEventListener('input', function(event) {
           if (event.isTrusted) {
@@ -2780,6 +2815,14 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         titleEl.addEventListener('input', function(event) {
           if (event.isTrusted) {
             platformFieldEdited[platform + 'BaseTitle'] = true;
+            saveStateSoon();
+          }
+        });
+      }
+      if (hashtagsEl) {
+        hashtagsEl.addEventListener('input', function(event) {
+          if (event.isTrusted) {
+            platformFieldEdited[platform + 'Hashtags'] = true;
             saveStateSoon();
           }
         });
@@ -2822,11 +2865,12 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         updateAll();
         saveStateSoon();
       }
-      if (event.target.matches('#textInput, [name="title"]')) {
+      if (event.target.matches('#textInput, [name="title"], #hashtagsInput')) {
         if (event.isTrusted) {
           var textKeys = ['facebookText', 'linkedinText', 'xText', 'instagramText', 'tiktokText', 'youtubeText'];
           var titleKeys = ['facebookBaseTitle', 'linkedinBaseTitle', 'xBaseTitle', 'instagramBaseTitle', 'tiktokBaseTitle', 'youtubeBaseTitle'];
-          var keysToReset = event.target.matches('#textInput') ? textKeys : titleKeys;
+          var hashtagsKeys = ['facebookHashtags', 'linkedinHashtags', 'xHashtags', 'instagramHashtags', 'tiktokHashtags', 'youtubeHashtags'];
+          var keysToReset = event.target.matches('#textInput') ? textKeys : event.target.matches('#hashtagsInput') ? hashtagsKeys : titleKeys;
           keysToReset.forEach(function(k) { delete platformFieldEdited[k]; });
         }
         syncBaseToPlatforms();
