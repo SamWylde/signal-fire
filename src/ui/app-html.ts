@@ -401,7 +401,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       overflow: hidden;
     }
     .file-field input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-    .file-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
+    .file-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
     .file-clear { position: relative; z-index: 1; margin-left: auto; flex-shrink: 0; padding: 0 5px; height: 20px; border: none; background: none; color: var(--ink-3); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 4px; }
     .file-clear:hover { background: var(--surface); color: var(--ink-1); }
     .preview-stack {
@@ -1774,6 +1774,17 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         return;
       }
       delete draftFiles[inputName];
+      if (inputName === 'image') {
+        ['facebookMediaPreview', 'instagramMediaPreview'].forEach(function(previewId) {
+          var box = document.getElementById(previewId);
+          if (!box) return;
+          var img = box.querySelector('img');
+          if (img && img.src && img.src.indexOf('blob:') === 0) {
+            URL.revokeObjectURL(img.src);
+          }
+          box.textContent = 'Signal Fire';
+        });
+      }
       var input = document.querySelector('[data-file-label][name="' + inputName + '"]');
       if (input) {
         input.value = '';
