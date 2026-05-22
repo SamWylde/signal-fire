@@ -312,10 +312,10 @@ function findLoginFlowId(platform: PostingPlatform, accountId: string): string |
 let processingDueQueue = false;
 const DEFAULT_CAMPAIGN_DELAY_MIN_SECONDS = 120;
 const DEFAULT_CAMPAIGN_DELAY_MAX_SECONDS = 300;
-const DEFAULT_TYPING_SPEED_PERCENT = 200;
+const DEFAULT_TYPING_SPEED_PERCENT = 1;
 const MAX_CAMPAIGN_DELAY_SECONDS = 3600;
-const MIN_TYPING_SPEED_PERCENT = 50;
-const MAX_TYPING_SPEED_PERCENT = 1000;
+const MIN_TYPING_SPEED_PERCENT = 1;
+const MAX_TYPING_SPEED_PERCENT = 20;
 const DEFAULT_WORD_PAUSE_MAX_MS = 40;
 const MIN_WORD_PAUSE_MAX_MS = 0;
 const MAX_WORD_PAUSE_MAX_MS = 200;
@@ -1410,7 +1410,7 @@ function typingSpeedMultiplier(form: FormData): number {
       MIN_TYPING_SPEED_PERCENT,
       MAX_TYPING_SPEED_PERCENT,
     ) ?? DEFAULT_TYPING_SPEED_PERCENT;
-  return percent / 100;
+  return percent;
 }
 
 function wordPauseMaxMs(form: FormData): number {

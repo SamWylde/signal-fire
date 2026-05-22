@@ -108,7 +108,7 @@ function defaultRange(min: number, max: number): [number, number] {
 
 function normalizeTypingSpeedMultiplier(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return 1;
-  return Math.min(10, Math.max(0.25, value));
+  return Math.min(20, Math.max(1, value));
 }
 
 function scaleRangeForSpeed(range: [number, number], speedMultiplier: number): [number, number] {
