@@ -227,7 +227,6 @@ export async function writeMetadata(meta: SessionMetadata): Promise<void> {
 export async function isSessionFresh(
   platform: Platform,
   accountId: AccountId,
-  maxAgeHours = 24,
 ): Promise<boolean> {
   const paths = await resolveSessionPathsForRead(platform, accountId);
   let meta: SessionMetadata;
@@ -245,9 +244,7 @@ export async function isSessionFresh(
       return false;
     }
   }
-  const lastValidated = new Date(meta.lastValidated).getTime();
-  const ageMs = Date.now() - lastValidated;
-  return ageMs < maxAgeHours * 60 * 60 * 1000;
+  return true;
 }
 
 export async function saveStorageState(

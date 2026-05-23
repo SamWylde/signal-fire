@@ -149,34 +149,17 @@ describe('isSessionFresh', () => {
     expect(fresh).toBe(false);
   });
 
-  it('returns false when lastValidated is beyond maxAgeHours', async () => {
-    const context = {
-      storageState: async () => ({ cookies: [], origins: [] }),
-    } as Parameters<typeof saveStorageState>[0];
-    await saveStorageState(context, 'reddit', 'oldUser');
-    const meta = await readMetadata('reddit', 'oldUser');
-    if (meta === null) throw new Error('expected metadata to exist');
-    const staleDate = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
-    await writeMetadata({
-      ...meta,
-      lastValidated: staleDate,
-    });
-    const fresh = await isSessionFresh('reddit', 'oldUser', 24);
-    expect(fresh).toBe(false);
-  });
-
-  it('respects a custom maxAgeHours', async () => {
+  it('returns true even when lastValidated is old, as long as structure is intact', async () => {
     const paths = getSessionPaths('threads', 'user1');
     await fsp.mkdir(paths.userDataDir, { recursive: true });
-    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
     await writeMetadata({
       platform: 'threads',
       accountId: 'user1',
       mode: 'userDataDir',
-      lastValidated: twoHoursAgo,
+      lastValidated: oneYearAgo,
     });
-    expect(await isSessionFresh('threads', 'user1', 1)).toBe(false);
-    expect(await isSessionFresh('threads', 'user1', 3)).toBe(true);
+    expect(await isSessionFresh('threads', 'user1')).toBe(true);
   });
 
   it('does not trust storageState if the file changed after metadata was written', async () => {

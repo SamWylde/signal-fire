@@ -1853,6 +1853,14 @@ async function runCampaignNow(
           ...(resultDetail !== undefined && { detail: resultDetail }),
         });
 
+        if (result.ok) {
+          try {
+            await markUserDataDirValidated(platform, accountId);
+          } catch (err) {
+            console.error('Failed to update lastValidated after successful post:', err);
+          }
+        }
+
         if (
           !result.ok &&
           result.error !== undefined &&
