@@ -341,18 +341,34 @@ async function createPostViaDirectUrl(
     }
 
     const postButtonSelector = LINKEDIN.selectors.companyShare.postButton;
-    await page.waitForFunction(
-      (selector: string) => {
-        const el = document.querySelector(selector);
-        return el ? !(el as HTMLButtonElement).disabled : false;
-      },
-      postButtonSelector,
-      { timeout: mediumMs },
-    );
+    const postButtonPosition = await page
+      .waitForFunction(
+        (selector: string) => {
+          const buttons = Array.from(document.querySelectorAll(selector)) as HTMLButtonElement[];
+          const index = buttons.findIndex((button) => {
+            const text = (button.textContent ?? '').replace(/\s+/g, ' ').trim();
+            const style = window.getComputedStyle(button);
+            const rect = button.getBoundingClientRect();
+            return (
+              text.toLowerCase() === 'post' &&
+              !button.disabled &&
+              button.getAttribute('aria-disabled') !== 'true' &&
+              style.visibility !== 'hidden' &&
+              style.display !== 'none' &&
+              rect.width > 0 &&
+              rect.height > 0
+            );
+          });
+          return index >= 0 ? index + 1 : false;
+        },
+        postButtonSelector,
+        { timeout: mediumMs },
+      )
+      .then((handle) => handle.jsonValue() as Promise<number>);
 
     let postClickError: unknown = null;
     try {
-      await humanClick(page, page.locator(postButtonSelector).first());
+      await humanClick(page, page.locator(postButtonSelector).nth(postButtonPosition - 1));
     } catch (err) {
       postClickError = err;
     }

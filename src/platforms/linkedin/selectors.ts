@@ -100,8 +100,7 @@ export const LINKEDIN = {
       // data-test attribute first (most stable), then aria-label, then structural, then class-based
       textEditor:
         '[data-test-ql-editor-contenteditable="true"], div[aria-label="Text editor for creating content"], div[contenteditable="true"][role="textbox"][aria-multiline="true"]',
-      postButton:
-        'button.share-actions__primary-action, button.artdeco-button--primary:has(.artdeco-button__text:text-is("Post"))',
+      postButton: 'button.share-actions__primary-action, button.artdeco-button--primary',
       scheduleButton:
         'button[aria-label="Schedule post"], button.share-actions__scheduled-post-btn',
     },

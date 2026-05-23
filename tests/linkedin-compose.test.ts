@@ -16,6 +16,13 @@ describe('LinkedIn compose selectors', () => {
     expect(LINKEDIN.selectors.companyPage.startPostTrigger).toContain('Create a post');
     expect(LINKEDIN.selectors.companyPage.startPostTriggerXPath).toContain('Start a post');
   });
+
+  it('keeps the company-share post button selector native CSS compatible', () => {
+    expect(LINKEDIN.selectors.companyShare.postButton).toBe(
+      'button.share-actions__primary-action, button.artdeco-button--primary',
+    );
+    expect(LINKEDIN.selectors.companyShare.postButton).not.toMatch(/:has-text|:text-is/);
+  });
 });
 
 describe('getCompanyPageCandidateUrls', () => {
