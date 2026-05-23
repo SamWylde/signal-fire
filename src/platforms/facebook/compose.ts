@@ -29,6 +29,11 @@ export interface FacebookComposeInput {
   onLog?: (message: string, detail?: string) => void;
 }
 
+export interface FacebookComposeResult {
+  status: 'posted';
+  detail: string;
+}
+
 function logFacebook(input: FacebookComposeInput, message: string, detail?: string): void {
   input.onLog?.(message, detail);
 }
@@ -141,6 +146,114 @@ async function switchIntoPageIfPromptVisible(
   return true;
 }
 
+async function clickFacebookSettingsPostButton(
+  page: Page,
+  input: FacebookComposeInput,
+): Promise<void> {
+  const selector = FACEBOOK.selectors.composer.postSubmitButton;
+  const postButtonPosition = await page
+    .waitForFunction(
+      (buttonSelector: string) => {
+        const buttons = Array.from(document.querySelectorAll(buttonSelector)) as HTMLElement[];
+        const candidates = buttons
+          .map((button, index) => {
+            const text = (button.textContent ?? '').replace(/\s+/g, ' ').trim();
+            const style = window.getComputedStyle(button);
+            const rect = button.getBoundingClientRect();
+            return {
+              button,
+              index,
+              bottom: rect.y + rect.height,
+              visible:
+                button.getAttribute('aria-label') === 'Post' &&
+                text === 'Post' &&
+                button.getAttribute('aria-disabled') !== 'true' &&
+                style.visibility !== 'hidden' &&
+                style.display !== 'none' &&
+                rect.width > 0 &&
+                rect.height > 0,
+            };
+          })
+          .filter((candidate) => candidate.visible)
+          .sort((left, right) => right.bottom - left.bottom);
+
+        const candidate = candidates[0];
+        return candidate === undefined ? false : candidate.index + 1;
+      },
+      selector,
+      { timeout: FACEBOOK.timeouts.mediumMs },
+    )
+    .then((handle) => handle.jsonValue() as Promise<number>);
+
+  const postButton = page.locator(selector).nth(postButtonPosition - 1);
+  await humanClick(page, postButton);
+  logFacebook(input, 'Facebook settings Post button clicked');
+}
+
+async function waitForFacebookComposerHidden(page: Page, timeoutMs: number): Promise<boolean> {
+  return page
+    .locator(FACEBOOK.selectors.composer.modal)
+    .waitFor({ state: 'hidden', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function waitForFacebookPublishCompletion(
+  page: Page,
+  input: FacebookComposeInput,
+): Promise<FacebookComposeResult> {
+  await page
+    .locator(FACEBOOK.selectors.composer.settingsDialog)
+    .waitFor({ state: 'hidden', timeout: FACEBOOK.timeouts.longMs });
+
+  if (await waitForFacebookComposerHidden(page, FACEBOOK.timeouts.shortMs)) {
+    return {
+      status: 'posted',
+      detail: 'Confirmed by Facebook composer closing after final Post',
+    };
+  }
+
+  const returnedToComposer = await isLocatorVisible(
+    page.locator(FACEBOOK.selectors.composer.modal).first(),
+    1500,
+  ).catch(() => false);
+  if (!returnedToComposer) {
+    return {
+      status: 'posted',
+      detail: 'Confirmed by Facebook composer closing after final Post',
+    };
+  }
+
+  logFacebook(
+    input,
+    'Facebook returned to composer after final click; retrying settings Post submit',
+  );
+
+  const nextButton = page.locator(FACEBOOK.selectors.composer.nextButton).first();
+  await nextButton.waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+  await humanClick(page, nextButton);
+  await page
+    .locator(FACEBOOK.selectors.composer.settingsDialog)
+    .waitFor({ state: 'visible', timeout: FACEBOOK.timeouts.mediumMs });
+  await jitterSleep(600, 0.4);
+
+  await clickFacebookSettingsPostButton(page, input);
+  await page
+    .locator(FACEBOOK.selectors.composer.settingsDialog)
+    .waitFor({ state: 'hidden', timeout: FACEBOOK.timeouts.longMs });
+
+  if (!(await waitForFacebookComposerHidden(page, FACEBOOK.timeouts.shortMs))) {
+    throw new Error(
+      'Post may not have been published (Facebook returned to the composer instead of submitting)',
+    );
+  }
+
+  return {
+    status: 'posted',
+    detail: 'Confirmed by Facebook composer closing after retrying final Post',
+  };
+}
+
 async function openFacebookComposer(page: Page, input: FacebookComposeInput): Promise<void> {
   const firstAttempt = await clickFirstVisible(
     page,
@@ -165,7 +278,10 @@ async function openFacebookComposer(page: Page, input: FacebookComposeInput): Pr
 }
 
 // Drives the composer on an already-authenticated page. Throws on unrecoverable error.
-export async function createPost(page: Page, input: FacebookComposeInput): Promise<void> {
+export async function createPost(
+  page: Page,
+  input: FacebookComposeInput,
+): Promise<FacebookComposeResult | undefined> {
   // --- Step 1: Navigate ---
   await page.goto(input.pageUrl, { waitUntil: 'domcontentloaded' });
   await jitterSleep(1500, 0.6);
@@ -288,12 +404,7 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
   let postClickError: unknown = null;
 
   try {
-    const clicked = await clickFirstVisible(
-      page,
-      [page.locator(FACEBOOK.selectors.composer.postSubmitButton)],
-      FACEBOOK.timeouts.mediumMs,
-    );
-    if (!clicked) throw new Error('Could not find Facebook Post/Publish button in settings dialog');
+    await clickFacebookSettingsPostButton(page, input);
     postClickError = null;
   } catch (err) {
     postClickError = err;
@@ -317,10 +428,12 @@ export async function createPost(page: Page, input: FacebookComposeInput): Promi
 
   // --- Step 10: Wait for submission confirmation ---
   try {
-    await page
-      .locator(FACEBOOK.selectors.composer.settingsDialog)
-      .waitFor({ state: 'hidden', timeout: FACEBOOK.timeouts.longMs });
-  } catch {
-    throw new Error('Post may not have been published (settings dialog did not close)');
+    return await waitForFacebookPublishCompletion(page, input);
+  } catch (err) {
+    throw new Error(
+      `Post may not have been published (${
+        err instanceof Error ? err.message : 'Facebook did not confirm submission'
+      })`,
+    );
   }
 }

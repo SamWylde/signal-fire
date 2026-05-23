@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractLinkedInCompanyIdFromUrl,
   getCompanyPageCandidateUrls,
+  isLinkedInCompanyPublishedUrl,
 } from '../src/platforms/linkedin/compose.js';
 import { LINKEDIN } from '../src/platforms/linkedin/selectors.js';
 
@@ -22,6 +23,11 @@ describe('LinkedIn compose selectors', () => {
       'button.share-actions__primary-action, button.artdeco-button--primary',
     );
     expect(LINKEDIN.selectors.companyShare.postButton).not.toMatch(/:has-text|:text-is/);
+  });
+
+  it('keeps company-share success copy for publish confirmation', () => {
+    expect(LINKEDIN.selectors.companyShare.successText).toBe('Post successful.');
+    expect(LINKEDIN.selectors.companyShare.viewPostText).toBe('View post');
   });
 });
 
@@ -49,5 +55,24 @@ describe('getCompanyPageCandidateUrls', () => {
     expect(extractLinkedInCompanyIdFromUrl('https://www.linkedin.com/company/grantcue/')).toBe(
       'grantcue',
     );
+  });
+
+  it('recognizes the post-submit company published URL without the share query', () => {
+    expect(
+      isLinkedInCompanyPublishedUrl(
+        'https://www.linkedin.com/company/110105724/admin/page-posts/published/',
+      ),
+    ).toBe(true);
+    expect(
+      isLinkedInCompanyPublishedUrl(
+        'https://www.linkedin.com/company/110105724/admin/page-posts/published/?share=true',
+      ),
+    ).toBe(false);
+    expect(isLinkedInCompanyPublishedUrl('https://example.com/company/110105724/')).toBe(false);
+    expect(
+      isLinkedInCompanyPublishedUrl(
+        'https://notlinkedin.com/company/110105724/admin/page-posts/published/',
+      ),
+    ).toBe(false);
   });
 });

@@ -2046,7 +2046,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function resultTone(result) {
       var label = resultLabel(result);
       if (label === 'posted') return 'ok';
-      if (label === 'queued' || label === 'posting' || label === 'prepared') return 'warn';
+      if (label === 'queued' || label === 'posting' || label === 'prepared' || label === 'unsure') return 'warn';
       if (label === 'skipped' || label === 'canceled') return 'none';
       return result.ok ? 'ok' : 'bad';
     }
@@ -2054,6 +2054,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function resultDetail(result) {
       if (resultLabel(result) === 'prepared' && !result.detail) {
         return 'Form filled - submit manually in browser tab';
+      }
+      if (resultLabel(result) === 'unsure' && !result.detail) {
+        return 'Submitted, but confirmation was not detected. Verify on the platform before reposting.';
       }
       return result.detail || result.url || result.error || '-';
     }
@@ -2359,7 +2362,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         await refreshHistory();
         await refreshQueue();
         await refreshStatus();
-        setView(result.queued ? 'schedule' : 'history');
       } catch (err) {
         setBottom(err.message, 'bad');
       } finally {

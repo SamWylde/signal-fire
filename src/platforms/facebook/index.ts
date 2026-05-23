@@ -5,7 +5,7 @@ import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
 import type { AccountId, PostResult } from '../../core/types.js';
 import { type FacebookAuthInput, applyFacebookAuth, isLoggedIn } from './auth.js';
-import { type FacebookComposeInput, createPost } from './compose.js';
+import { type FacebookComposeInput, type FacebookComposeResult, createPost } from './compose.js';
 
 export type { FacebookComposeInput } from './compose.js';
 
@@ -55,8 +55,9 @@ export async function post(
   }
 
   // 5. Create post
+  let composeResult: FacebookComposeResult | undefined;
   try {
-    await createPost(page, input);
+    composeResult = await createPost(page, input);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     const debugArtifacts = await captureFailureArtifacts('facebook', page).catch(() => undefined);
@@ -77,8 +78,17 @@ export async function post(
   // 7. Record success
   await recordAction('facebook', accountId, 'post', {
     ok: true,
-    meta: { hasImage: !!input.imagePath, pageUrl: input.pageUrl },
+    meta: {
+      hasImage: !!input.imagePath,
+      pageUrl: input.pageUrl,
+      status: composeResult?.status,
+      detail: composeResult?.detail,
+    },
   });
 
-  return { ok: true };
+  return {
+    ok: true,
+    ...(composeResult?.status !== undefined && { status: composeResult.status }),
+    ...(composeResult?.detail !== undefined && { detail: composeResult.detail }),
+  };
 }

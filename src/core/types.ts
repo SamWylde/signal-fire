@@ -31,7 +31,9 @@ export interface PostInput {
 
 export interface PostResult {
   ok: boolean;
+  status?: 'posted' | 'failed' | 'unsure';
   url?: string;
   error?: string;
+  detail?: string;
   debugArtifacts?: DebugCaptureResult;
 }

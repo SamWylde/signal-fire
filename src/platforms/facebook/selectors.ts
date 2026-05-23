@@ -77,7 +77,7 @@ export const FACEBOOK = {
       // Verified 2026-05-20 from user-provided HTML dump of the Stage 2 Post settings dialog.
       // Scoped to the settings dialog to avoid matching the Stage 1 "Post" word in other UI elements.
       postSubmitButton:
-        '[aria-label="Post settings"][role="dialog"] div[aria-label="Post"][role="button"]',
+        '[aria-label="Post settings"][role="dialog"] [aria-label="Post"][role="button"]',
 
       // File input for image/video upload — already present in the DOM inside the modal,
       // sibling to the "Photo/video" button. setInputFiles on this directly to avoid opening
