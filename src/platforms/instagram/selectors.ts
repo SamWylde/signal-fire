@@ -81,9 +81,12 @@ export const INSTAGRAM = {
       selectZoomButton: 'button:has(svg[aria-label="Select zoom"])',
       openMediaGalleryButton: 'button:has(svg[aria-label="Open media gallery"])',
 
-      // Confirmation: "Your post has been shared" text or the modal closing
+      // Confirmation: success modal shown after publish.
+      shareConfirmationHeading: 'Post shared',
+      shareConfirmationText: 'Your post has been shared.',
       shareConfirmation:
-        "//*[contains(text(),'Your post has been shared') or contains(text(),'has been shared')]",
+        "xpath=//*[normalize-space()='Post shared' or normalize-space()='Your post has been shared.']",
+      doneButton: "xpath=//*[@role='button' and normalize-space()='Done']",
 
       // The Reels-vs-Post selector in the modal (Instagram offers both)
       postMenuItem:

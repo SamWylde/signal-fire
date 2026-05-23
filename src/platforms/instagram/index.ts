@@ -5,7 +5,7 @@ import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
 import type { AccountId, PostResult } from '../../core/types.js';
 import { type InstagramAuthInput, applyInstagramAuth, isLoggedIn } from './auth.js';
-import { type InstagramComposeInput, createPost } from './composer.js';
+import { type InstagramComposeInput, type InstagramComposeResult, createPost } from './composer.js';
 
 export type { InstagramComposeInput } from './composer.js';
 
@@ -14,6 +14,10 @@ export interface InstagramPostOptions {
   auth?: InstagramAuthInput;
   launchOptions?: Partial<LaunchOptions>;
   rateLimits?: ActionLimits;
+}
+
+function isUnsurePublishConfirmation(message: string): boolean {
+  return /post may not have been published|no share confirmation/i.test(message);
 }
 
 export async function post(
@@ -55,17 +59,20 @@ export async function post(
   }
 
   // 5. Create post
+  let composeResult: InstagramComposeResult | undefined;
   try {
-    await createPost(page, input);
+    composeResult = await createPost(page, input);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    const status = isUnsurePublishConfirmation(msg) ? 'unsure' : 'failed';
     const debugArtifacts = await captureFailureArtifacts('instagram', page).catch(() => undefined);
     await recordAction('instagram', accountId, 'post', {
       ok: false,
-      meta: { hasImage: true, captionLength: input.caption?.length ?? 0 },
+      meta: { hasImage: true, captionLength: input.caption?.length ?? 0, status },
     });
     return {
       ok: false,
+      status,
       error: msg,
       ...(debugArtifacts !== undefined && { debugArtifacts }),
     };
@@ -77,8 +84,17 @@ export async function post(
   // 7. Record success
   await recordAction('instagram', accountId, 'post', {
     ok: true,
-    meta: { hasImage: true, captionLength: input.caption?.length ?? 0 },
+    meta: {
+      hasImage: true,
+      captionLength: input.caption?.length ?? 0,
+      status: composeResult?.status,
+      detail: composeResult?.detail,
+    },
   });
 
-  return { ok: true };
+  return {
+    ok: true,
+    ...(composeResult?.status !== undefined && { status: composeResult.status }),
+    ...(composeResult?.detail !== undefined && { detail: composeResult.detail }),
+  };
 }
