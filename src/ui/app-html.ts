@@ -622,7 +622,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         <div class="toolbar">
           <button id="refreshStatus" class="btn ghost" type="button">Refresh</button>
           <button id="saveDraft" class="btn compose-action" type="button">Save draft</button>
-          <button id="checkForm" class="btn compose-action" type="button">Check form</button>
           <button id="manualVerifyTop" class="btn compose-action" type="button">Prepare 0 (manual)</button>
           <button id="postSelectedTop" class="btn primary compose-action" type="button">Post to 0</button>
         </div>
@@ -1139,7 +1138,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <label>Post time
                   <input type="datetime-local" name="schedule" data-save="schedule" form="campaignForm">
                 </label>
-                <div class="meta-line">Leave blank to post immediately.</div>
+                <div class="meta-line">Leave blank to post immediately. Local time.</div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   <button id="saveQueue" class="btn primary" type="button">Save to queue</button>
                   <button id="refreshQueue" class="btn" type="button">Refresh queue</button>
@@ -1152,7 +1151,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
             </div>
           </div>
           <div class="card" style="margin-top:16px">
-            <div class="card-head"><div class="eyebrow">Saved queue</div></div>
+            <div class="card-head" style="display:flex;align-items:center"><div class="eyebrow">Saved queue</div><button id="clearCompleted" class="btn" type="button" style="display:none;margin-left:auto">Clear completed</button></div>
             <div style="padding:12px">
               <table>
                 <thead><tr><th>When</th><th>Targets</th><th>Status</th><th>Text</th><th></th></tr></thead>
@@ -1260,6 +1259,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       youtube: '#ff0033',
       instagram: '#e1306c'
     };
+    // Keep in sync with POSTING_PLATFORMS in src/core/types.ts.
+    var PLATFORM_POST_ORDER = ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'];
     var CAPTION_LIMITS = { x: 280, instagram: 2200, tiktok: 2200, linkedin: 3000, youtube: 5000, facebook: 63206 };
     var activeFlowId = null;
     var saveTimer = null;
@@ -1927,7 +1928,28 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function updateSchedulePreview() {
       var target = document.getElementById('schedulePreview');
       var schedule = document.querySelector('[name="schedule"]').value;
-      var targets = selectedTargets();
+      var targets = selectedTargets().slice().sort(function(a, b) {
+        var ai = PLATFORM_POST_ORDER.indexOf(a);
+        var bi = PLATFORM_POST_ORDER.indexOf(b);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      });
+      var rawMin = parseInt(document.querySelector('[name="campaignDelayMinSeconds"]').value, 10);
+      var rawMax = parseInt(document.querySelector('[name="campaignDelayMaxSeconds"]').value, 10);
+      var minVal = isNaN(rawMin) ? 0 : rawMin;
+      var maxVal = isNaN(rawMax) ? 0 : rawMax;
+      var lo = Math.min(minVal, maxVal);
+      var hi = Math.max(minVal, maxVal);
+      function formatPacingPart(seconds, isUpperBound) {
+        if (seconds < 60) return seconds + 's';
+        var minutes = isUpperBound ? Math.ceil(seconds / 60) : Math.floor(seconds / 60);
+        return minutes + 'm';
+      }
+      var pacingSuffix;
+      if (hi === 0) {
+        pacingSuffix = '';
+      } else {
+        pacingSuffix = ' + ' + formatPacingPart(lo, false) + '-' + formatPacingPart(hi, true) + ' pacing';
+      }
       target.replaceChildren();
       if (targets.length === 0) {
         target.textContent = 'No targets selected.';
@@ -1941,7 +1963,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           '<div style="display:flex;align-items:center;gap:10px">' +
           '<span class="platform-square" style="background:' + platformColors[platform] + '">' + platformNames[platform].slice(0, 2) + '</span>' +
           '<strong>' + platformNames[platform] + '</strong>' +
-          '<span class="meta-line" style="margin-left:auto">' + (schedule || 'post now') + (index > 0 ? ' plus pacing delay' : '') + '</span>' +
+          '<span class="meta-line" style="margin-left:auto">' + (schedule ? formatDateTime(new Date(schedule).toISOString()) : 'post now') + (index > 0 ? pacingSuffix : '') + '</span>' +
           '</div>';
         target.appendChild(row);
       });
@@ -2171,10 +2193,26 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       });
     }
 
-    function renderQueue(entries) {
+    function renderQueue(entries, manualVerifyActive, accountName) {
       queuedEntries = entries || [];
       var el = document.getElementById('queueRows');
       el.replaceChildren();
+      var completedCount = queuedEntries.filter(function(e) { return e.status === 'posted' || e.status === 'failed' || e.status === 'canceled'; }).length;
+      document.getElementById('clearCompleted').style.display = completedCount > 0 ? '' : 'none';
+      if (manualVerifyActive) {
+        var bannerRow = document.createElement('tr');
+        var bannerCell = document.createElement('td');
+        bannerCell.colSpan = 5;
+        bannerCell.style.background = '#ffe9ec';
+        bannerCell.style.color = '#b00020';
+        bannerCell.style.padding = '10px 14px';
+        bannerCell.style.fontWeight = '600';
+        bannerCell.style.textAlign = 'center';
+        bannerCell.className = '';
+        bannerCell.textContent = 'Paused — manual verify active for ' + (accountName || currentAccount()) + '.';
+        bannerRow.appendChild(bannerCell);
+        el.appendChild(bannerRow);
+      }
       if (queuedEntries.length === 0) {
         var empty = document.createElement('tr');
         var emptyCell = document.createElement('td');
@@ -2211,7 +2249,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     async function refreshQueue() {
       var data = await api('/api/queue?account=' + encodeURIComponent(currentAccount()));
-      renderQueue(data.entries || []);
+      renderQueue(data.entries || [], data.manualVerifyActive, data.account);
     }
 
     function setLoginFlowActive(active) {
@@ -2272,7 +2310,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     function setComposeActionBusy(busy) {
       document.getElementById('postSelectedTop').disabled = busy;
       document.getElementById('manualVerifyTop').disabled = busy;
-      document.getElementById('checkForm').disabled = busy;
     }
 
     function selectedTargetNames(targets) {
@@ -2284,7 +2321,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       return Boolean((input && input.value) || (draftFiles[name] && draftFiles[name].path));
     }
 
-    function checkComposeForm() {
+    function validateComposeForm() {
       var errors = [];
       var targets = selectedTargets();
       var text = document.getElementById('textInput').value.trim();
@@ -2315,15 +2352,18 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       if ((targets.indexOf('tiktok') !== -1 || targets.indexOf('youtube') !== -1) && !fileSelected('video')) {
         errors.push('Choose a video for TikTok or YouTube.');
       }
+      return { ok: errors.length === 0, errors: errors, targets: targets };
+    }
 
-      if (errors.length > 0) {
-        var message = errors.join(' ');
+    function checkComposeForm() {
+      var validation = validateComposeForm();
+      if (!validation.ok) {
+        var message = validation.errors.join(' ');
         showToast('Check form', message, 'bad');
         setBottom(message, 'bad');
         return false;
       }
-
-      showToast('Check form', 'Required fields are present for ' + selectedTargetNames(targets) + '.', 'good');
+      showToast('Check form', 'Required fields are present for ' + selectedTargetNames(validation.targets) + '.', 'good');
       setBottom('Required fields are present.', 'good');
       return true;
     }
@@ -2394,7 +2434,21 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       }
     }
 
+    async function clearCompleted() {
+      var count = queuedEntries.filter(function(e) { return e.status === 'posted' || e.status === 'failed' || e.status === 'canceled'; }).length;
+      if (!confirm('Clear ' + count + ' completed entries?')) return;
+      await api('/api/queue/completed?account=' + encodeURIComponent(currentAccount()), { method: 'DELETE' });
+      await refreshQueue();
+    }
+
     async function saveQueue() {
+      var validation = validateComposeForm();
+      if (!validation.ok) {
+        var message = validation.errors.join(' ');
+        showToast('Check form', message, 'bad');
+        setBottom(message, 'bad');
+        return;
+      }
       var scheduleInput = document.querySelector('[name="schedule"]');
       if (!scheduleInput.value) {
         setBottom('Choose a schedule time to queue', 'bad');
@@ -2426,7 +2480,6 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
     document.getElementById('postSelectedTop').addEventListener('click', runCampaign);
     document.getElementById('manualVerifyTop').addEventListener('click', runManualVerify);
-    document.getElementById('checkForm').addEventListener('click', checkComposeForm);
     document.getElementById('copyRunLog').addEventListener('click', function() {
       var button = document.getElementById('copyRunLog');
       var text = JSON.stringify(runLogEntries.slice().reverse(), null, 2);
@@ -2468,6 +2521,9 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     });
     document.getElementById('refreshQueue').addEventListener('click', function() {
       refreshQueue().catch(function(err) { setBottom(err.message, 'bad'); });
+    });
+    document.getElementById('clearCompleted').addEventListener('click', function() {
+      clearCompleted().catch(function(err) { setBottom(err.message, 'bad'); });
     });
     document.getElementById('queueRows').addEventListener('click', async function(event) {
       var button = event.target.closest('[data-cancel-queue]');

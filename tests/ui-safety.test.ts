@@ -547,7 +547,6 @@ describe('manual campaign verification', () => {
       /Promise\.allSettled\(\[\s*refreshAccounts\(\),\s*loadCredentials\(\),\s*refreshStatus\(\),\s*refreshHistory\(\),\s*refreshQueue\(\),\s*refreshRunLogs\(\)\s*\]\)/,
     );
     expect(REDESIGNED_APP_HTML).toContain('window.confirm');
-    expect(REDESIGNED_APP_HTML).toContain('id="checkForm"');
     expect(REDESIGNED_APP_HTML).toContain('data-linkedin-company-id-row');
     expect(REDESIGNED_APP_HTML).toContain("selectedDetailPlatform === 'facebook'");
     expect(REDESIGNED_APP_HTML).toContain('name="typingSpeedPercent"');
@@ -557,6 +556,9 @@ describe('manual campaign verification', () => {
     expect(REDESIGNED_APP_HTML).toContain('draftFiles');
     expect(REDESIGNED_APP_HTML).toContain('draftUploadRequests');
     expect(REDESIGNED_APP_HTML).toContain('/api/draft-file');
+    expect(REDESIGNED_APP_HTML).toContain('id="clearCompleted"');
+    expect(REDESIGNED_APP_HTML).toContain('id="saveQueue"');
+    expect(REDESIGNED_APP_HTML).toContain('Local time.');
     expect(REDESIGNED_APP_HTML).not.toContain('Dry run (test without');
     expect(REDESIGNED_APP_HTML).not.toContain('Ready check');
   });
