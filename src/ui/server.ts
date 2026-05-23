@@ -2670,6 +2670,8 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
         ? queue
         : queue.filter((entry) => entry.account === account)
       ).map(queueEntryForClient),
+      manualVerifyActive: account !== undefined ? isManualVerifyActive(account) : false,
+      account: account ?? null,
     });
     return;
   }
@@ -2695,6 +2697,22 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       return { ...existing, status: 'canceled', completedAt: new Date().toISOString() };
     });
     sendJson(res, 200, { ok: true, entry: queueEntryForClient(entry) });
+    return;
+  }
+
+  if (req.method === 'DELETE' && url.pathname === '/api/queue/completed') {
+    const account = url.searchParams.get('account')?.trim() || undefined;
+    if (account === undefined) {
+      sendJson(res, 400, { ok: false, error: 'account is required' });
+      return;
+    }
+    const queue = await loadQueue();
+    const filtered = queue.filter((entry) =>
+      entry.account !== account ||
+      (entry.status !== 'posted' && entry.status !== 'failed' && entry.status !== 'canceled')
+    );
+    await saveQueue(filtered);
+    sendJson(res, 200, { ok: true, removed: queue.length - filtered.length });
     return;
   }
 
