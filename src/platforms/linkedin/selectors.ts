@@ -101,6 +101,8 @@ export const LINKEDIN = {
       textEditor:
         '[data-test-ql-editor-contenteditable="true"], div[aria-label="Text editor for creating content"], div[contenteditable="true"][role="textbox"][aria-multiline="true"]',
       postButton: 'button.share-actions__primary-action, button.artdeco-button--primary',
+      successText: 'Post successful.',
+      viewPostText: 'View post',
       scheduleButton:
         'button[aria-label="Schedule post"], button.share-actions__scheduled-post-btn',
     },

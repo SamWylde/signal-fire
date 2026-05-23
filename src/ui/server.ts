@@ -66,7 +66,7 @@ interface StatusRow {
 interface CampaignResult {
   platform: PostingPlatform;
   ok: boolean;
-  status?: 'posted' | 'queued' | 'failed' | 'skipped' | 'prepared';
+  status?: 'posted' | 'queued' | 'failed' | 'skipped' | 'prepared' | 'unsure';
   url?: string;
   error?: string;
   detail?: string;
@@ -140,7 +140,7 @@ interface HistoryEntry {
   account: string;
   platform: PostingPlatform;
   ok: boolean;
-  status: 'posted' | 'queued' | 'failed' | 'skipped' | 'prepared';
+  status: 'posted' | 'queued' | 'failed' | 'skipped' | 'prepared' | 'unsure';
   textPreview: string;
   queueId?: string;
   scheduledAt?: string;
@@ -1389,6 +1389,27 @@ function appendSafetySkippedResults(
   }
 }
 
+function postResultStatus(result: PostResult): NonNullable<CampaignResult['status']> {
+  return result.status ?? (result.ok ? 'posted' : 'failed');
+}
+
+function postResultLogLevel(result: PostResult): RunLogEntry['level'] {
+  if (result.ok) return 'success';
+  return postResultStatus(result) === 'unsure' ? 'warn' : 'error';
+}
+
+function postResultLogMessage(result: PostResult): string {
+  if (result.ok) return 'Live post completed';
+  return postResultStatus(result) === 'unsure' ? 'Live post status unsure' : 'Live post failed';
+}
+
+function postResultDetail(result: PostResult): string | undefined {
+  return result.ok
+    ? (result.detail ?? result.url)
+    : [result.error, result.detail, result.debugArtifacts?.summary].filter(Boolean).join('\n') ||
+        undefined;
+}
+
 function parseOptionalInt(
   value: string | undefined,
   label: string,
@@ -1813,13 +1834,12 @@ async function runCampaignNow(
           message: 'Opening browser and composer',
         });
         const result = await invokePost(platform, input, accountId, launchOptions, rateLimits);
-        const resultDetail = result.ok
-          ? result.url
-          : [result.error, result.debugArtifacts?.summary].filter(Boolean).join('\n') || undefined;
+        const resultStatus = postResultStatus(result);
+        const resultDetail = postResultDetail(result);
         results.push({
           platform,
           ok: result.ok,
-          status: result.ok ? 'posted' : 'failed',
+          status: resultStatus,
           ...(result.url !== undefined && { url: result.url }),
           ...(result.error !== undefined && { error: result.error }),
           ...(resultDetail !== undefined && { detail: resultDetail }),
@@ -1828,8 +1848,8 @@ async function runCampaignNow(
           account: accountId,
           platform,
           scope: 'campaign',
-          level: result.ok ? 'success' : 'error',
-          message: result.ok ? 'Live post completed' : 'Live post failed',
+          level: postResultLogLevel(result),
+          message: postResultLogMessage(result),
           ...(resultDetail !== undefined && { detail: resultDetail }),
         });
 

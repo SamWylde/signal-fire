@@ -23,6 +23,8 @@ export interface LinkedInComposeInput {
 
 export interface LinkedInComposeResult {
   postUrl?: string;
+  status?: 'posted' | 'unsure';
+  detail?: string;
   /** Set to true when dryRun mode was active and the final submit was skipped */
   dryRun?: boolean;
   success?: boolean;
@@ -68,6 +70,19 @@ function withCompanyIdFromUrl(input: LinkedInComposeInput): LinkedInComposeInput
   }
   const companyId = extractLinkedInCompanyIdFromUrl(input.companyPageUrl);
   return companyId !== undefined ? { ...input, linkedinCompanyId: companyId } : input;
+}
+
+export function isLinkedInCompanyPublishedUrl(pageUrl: string): boolean {
+  try {
+    const parsed = new URL(pageUrl);
+    return (
+      (parsed.hostname === 'linkedin.com' || parsed.hostname.endsWith('.linkedin.com')) &&
+      /^\/company\/[^/]+\/admin\/page-posts\/published\/?$/.test(parsed.pathname) &&
+      parsed.searchParams.get('share') !== 'true'
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function collectFeedPostUrns(page: Page): Promise<string[]> {
@@ -179,7 +194,97 @@ async function waitForPublishedToast(page: Page): Promise<LinkedInComposeResult>
   if (/couldn't|failed|error|unable/i.test(text)) {
     throw new Error(`LinkedIn reported a publish failure: ${text}`);
   }
-  return {};
+  return { status: 'posted', success: true, detail: 'Confirmed by LinkedIn publish toast' };
+}
+
+function linkedInPublishFailureError(err: unknown): Error | null {
+  const errors = err instanceof AggregateError ? err.errors : [err];
+  for (const error of errors) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/LinkedIn reported a publish failure/i.test(message)) {
+      return error instanceof Error ? error : new Error(message);
+    }
+  }
+  return null;
+}
+
+async function waitForCompanyShareSuccessDialog(page: Page): Promise<LinkedInComposeResult> {
+  const confirmation = await page
+    .waitForFunction(
+      ({ successText, viewPostText }) => {
+        let onPublishedPage = false;
+        try {
+          const parsed = new URL(window.location.href);
+          onPublishedPage =
+            (parsed.hostname === 'linkedin.com' || parsed.hostname.endsWith('.linkedin.com')) &&
+            /^\/company\/[^/]+\/admin\/page-posts\/published\/?$/.test(parsed.pathname) &&
+            parsed.searchParams.get('share') !== 'true';
+        } catch {
+          onPublishedPage = false;
+        }
+
+        if (!onPublishedPage) return false;
+
+        const normalizedBody = (document.body.textContent ?? '').replace(/\s+/g, ' ').trim();
+        const hasSuccessText = normalizedBody.includes(successText);
+        const viewPostElement = Array.from(
+          document.querySelectorAll('a, button, [role="link"], [role="button"]'),
+        ).find(
+          (element) => (element.textContent ?? '').replace(/\s+/g, ' ').trim() === viewPostText,
+        );
+
+        if (!hasSuccessText && viewPostElement === undefined) return false;
+
+        const anchor =
+          viewPostElement instanceof HTMLAnchorElement
+            ? viewPostElement
+            : viewPostElement?.closest('a');
+        const signals = [
+          hasSuccessText ? 'success dialog' : undefined,
+          viewPostElement !== undefined ? 'View post link' : undefined,
+        ].filter((signal): signal is string => signal !== undefined);
+
+        return {
+          postUrl: anchor?.href ?? null,
+          signal: signals.join(' + '),
+          pageUrl: window.location.href,
+        };
+      },
+      {
+        successText: LINKEDIN.selectors.companyShare.successText,
+        viewPostText: LINKEDIN.selectors.companyShare.viewPostText,
+      },
+      { timeout: LINKEDIN.timeouts.longMs },
+    )
+    .then(
+      (handle) =>
+        handle.jsonValue() as Promise<{ postUrl: string | null; signal: string; pageUrl: string }>,
+    );
+
+  return {
+    status: 'posted',
+    success: true,
+    detail: `Confirmed by LinkedIn ${confirmation.signal} at ${confirmation.pageUrl}`,
+    ...(confirmation.postUrl !== null && { postUrl: confirmation.postUrl }),
+  };
+}
+
+async function waitForCompanySharePublishConfirmation(
+  page: Page,
+  toastPromise: Promise<LinkedInComposeResult>,
+): Promise<LinkedInComposeResult> {
+  try {
+    return await Promise.any([waitForCompanyShareSuccessDialog(page), toastPromise]);
+  } catch (err) {
+    const publishFailure = linkedInPublishFailureError(err);
+    if (publishFailure !== null) throw publishFailure;
+    return {
+      status: 'unsure',
+      success: false,
+      detail:
+        'Submitted, but LinkedIn did not show the success dialog, View post link, or publish toast before the confirmation timeout. Verify on LinkedIn before reposting.',
+    };
+  }
 }
 
 async function waitForPublishConfirmation(
@@ -189,8 +294,14 @@ async function waitForPublishConfirmation(
   toastPromise: Promise<LinkedInComposeResult>,
 ): Promise<LinkedInComposeResult> {
   try {
-    return await Promise.any([toastPromise, waitForFeedConfirmation(page, knownUrns, text)]);
-  } catch {
+    const result = await Promise.any([
+      toastPromise,
+      waitForFeedConfirmation(page, knownUrns, text),
+    ]);
+    return { status: 'posted', success: true, ...result };
+  } catch (err) {
+    const publishFailure = linkedInPublishFailureError(err);
+    if (publishFailure !== null) throw publishFailure;
     throw new Error('Post may not have been published (no toast or feed update confirmation)');
   }
 }
@@ -381,7 +492,7 @@ async function createPostViaDirectUrl(
 
     const toastPromise = waitForPublishedToast(page);
     toastPromise.catch(() => undefined);
-    return waitForPublishConfirmation(page, [], clampedText, toastPromise);
+    return waitForCompanySharePublishConfirmation(page, toastPromise);
   }
 
   // Article flow — two stages
