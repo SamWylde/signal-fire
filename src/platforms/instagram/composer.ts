@@ -13,8 +13,21 @@ export interface InstagramComposeInput {
   onLog?: (message: string, detail?: string) => void;
 }
 
+export interface InstagramComposeResult {
+  status: 'posted';
+  detail: string;
+}
+
 function logInstagram(input: InstagramComposeInput, message: string, detail?: string): void {
   input.onLog?.(message, detail);
+}
+
+export function hasInstagramShareConfirmationText(value: string): boolean {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return (
+    normalized.includes(INSTAGRAM.selectors.composer.shareConfirmationHeading) ||
+    normalized.includes(INSTAGRAM.selectors.composer.shareConfirmationText)
+  );
 }
 
 async function clickFirstUsable(
@@ -103,6 +116,45 @@ async function clickPostMenuIfPresent(page: Page, input: InstagramComposeInput):
   }
 }
 
+async function waitForInstagramShareConfirmation(
+  page: Page,
+  input: InstagramComposeInput,
+): Promise<InstagramComposeResult> {
+  const confirmation = await page
+    .waitForFunction(
+      ({ headingText, bodyText }) => {
+        const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+        const headings = Array.from(document.querySelectorAll('[role="heading"], h1, h2, h3')).map(
+          (node) => normalize(node.textContent ?? ''),
+        );
+        const body = normalize(document.body.textContent ?? '');
+        const hasHeading = headings.includes(headingText);
+        const hasBody = body.includes(bodyText);
+        if (!hasHeading && !hasBody) return false;
+
+        const signals = [
+          hasHeading ? 'Post shared heading' : undefined,
+          hasBody ? 'Your post has been shared body text' : undefined,
+        ].filter((signal): signal is string => signal !== undefined);
+
+        return {
+          signal: signals.join(' + '),
+          pageUrl: window.location.href,
+        };
+      },
+      {
+        headingText: INSTAGRAM.selectors.composer.shareConfirmationHeading,
+        bodyText: INSTAGRAM.selectors.composer.shareConfirmationText,
+      },
+      { timeout: INSTAGRAM.timeouts.longMs },
+    )
+    .then((handle) => handle.jsonValue() as Promise<{ signal: string; pageUrl: string }>);
+
+  const detail = `Confirmed by Instagram ${confirmation.signal} at ${confirmation.pageUrl}`;
+  logInstagram(input, 'Instagram share confirmation detected', detail);
+  return { status: 'posted', detail };
+}
+
 async function visibleScreenSummary(page: Page): Promise<string> {
   const headings = await page
     .locator('[role="heading"], h1, h2, h3')
@@ -148,7 +200,10 @@ async function clickNextWithRetry(
 
 // Drives the new-post wizard on an authenticated page. Throws on unrecoverable error or
 // if Instagram surfaces an Action Blocked screen.
-export async function createPost(page: Page, input: InstagramComposeInput): Promise<void> {
+export async function createPost(
+  page: Page,
+  input: InstagramComposeInput,
+): Promise<InstagramComposeResult | undefined> {
   const { shortMs, mediumMs, longMs } = INSTAGRAM.timeouts;
 
   // --- Step 1: Navigate ---
@@ -323,15 +378,12 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     );
   }
 
-  // --- Step 11: Confirmation ---
+  // --- Step 12: Confirmation ---
   // Dialog close alone is not enough: blocked/error layouts can also dismiss the composer.
-  const confirmed = await page
-    .locator(INSTAGRAM.selectors.composer.shareConfirmation)
-    .waitFor({ state: 'visible', timeout: longMs })
-    .then(() => true)
-    .catch(() => false);
-
-  if (!confirmed) {
+  let result: InstagramComposeResult;
+  try {
+    result = await waitForInstagramShareConfirmation(page, input);
+  } catch {
     const blockCheck = await checkBlocked(page, {
       extraPhrases: [...INSTAGRAM.blockPhrases],
       perCheckTimeoutMs: 1000,
@@ -342,15 +394,28 @@ export async function createPost(page: Page, input: InstagramComposeInput): Prom
     throw new Error('Post may not have been published (no share confirmation appeared)');
   }
 
-  await page
-    .locator(INSTAGRAM.selectors.composer.dialog)
-    .waitFor({ state: 'hidden', timeout: longMs })
-    .catch(() => undefined);
+  const doneClicked = await clickFirstUsable(
+    page,
+    [
+      page.getByRole('button', { name: /^Done$/i }),
+      page.locator(INSTAGRAM.selectors.composer.doneButton),
+    ],
+    shortMs,
+  ).catch(() => false);
+  if (doneClicked) {
+    logInstagram(input, 'Instagram success dialog closed');
+    await page
+      .locator(INSTAGRAM.selectors.composer.dialog)
+      .waitFor({ state: 'hidden', timeout: mediumMs })
+      .catch(() => undefined);
+  }
 
-  // --- Step 12: Post-publish block check ---
+  // --- Step 13: Post-publish block check ---
   // IG sometimes silently rejects posts after submission — surface this as a thrown error.
   const postCheck = await checkBlocked(page, { extraPhrases: [...INSTAGRAM.blockPhrases] });
   if (postCheck.blocked) {
     throw new Error(`Instagram blocked: ${postCheck.reason}`);
   }
+
+  return result;
 }
