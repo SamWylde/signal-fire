@@ -4,12 +4,13 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { isForbiddenIp, safeFetchToBuffer } from '../src/ui/safe-fetch.js';
+
 import { readLedger } from '../src/core/ledger.js';
 import { readMetadata } from '../src/core/session.js';
 import { REDESIGNED_APP_HTML } from '../src/ui/app-html.js';
 import {
   buildLaunchOptions,
-  buildManualCampaignInput,
   deleteAccount,
   getUiPortCandidates,
   isRetryableListenError,
@@ -259,18 +260,57 @@ describe('manual campaign verification', () => {
     return form;
   }
 
-  it('forces dryRun on manual campaign inputs for the verified platforms', () => {
-    const form = campaignForm(['x']);
-    form.set('typingSpeedPercent', '3');
-    const assets = { imagePath: 'C:\\tmp\\image.jpg' };
+  it('runs manual prepare with submit:false and propagates typing speed', async () => {
+    const calls: Array<{
+      platform: string;
+      submit: boolean;
+      input: { dryRun?: boolean; typingSpeedMultiplier?: number };
+    }> = [];
 
-    for (const platform of ['x', 'facebook', 'linkedin', 'instagram'] as const) {
-      const input = buildManualCampaignInput(platform, form, assets) as {
-        dryRun?: boolean;
-        typingSpeedMultiplier?: number;
-      };
-      expect(input.dryRun).toBe(true);
-      expect(input.typingSpeedMultiplier).toBe(3);
+    setManualVerifyDriverForTests({
+      launch: async () => ({
+        context: {
+          pages: () => [{}],
+          newPage: async () => ({}),
+          on: () => undefined,
+        } as never,
+        close: async () => undefined,
+      }),
+      post: async (platform, input, options) => {
+        calls.push({
+          platform,
+          submit: options.submit,
+          input: input as { dryRun?: boolean; typingSpeedMultiplier?: number },
+        });
+        return {
+          ok: true,
+          status: 'prepared',
+          detail: 'Form filled - submit manually in browser tab',
+        };
+      },
+    });
+
+    const form = campaignForm(['x', 'facebook', 'linkedin']);
+    form.set('typingSpeedPercent', '3');
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/campaign/manual`, {
+        method: 'POST',
+        body: form,
+      });
+      expect(response.status).toBe(200);
+
+      expect(calls).toHaveLength(3);
+      for (const call of calls) {
+        expect(call.submit).toBe(false);
+        expect(call.input.typingSpeedMultiplier).toBe(3);
+        // Manual prepare does NOT inject dryRun at the campaign layer; the platform's
+        // own post() injects it before calling the composer. The test asserts the
+        // observable contract: post() is called with submit:false.
+      }
+    } finally {
+      await handle.close();
     }
   });
 
@@ -281,9 +321,9 @@ describe('manual campaign verification', () => {
         launched = true;
         throw new Error('should not launch');
       },
-      isLoggedIn: async () => true,
-      compose: async () => undefined,
-      markValidated: async () => undefined,
+      post: async () => {
+        throw new Error('should not call post');
+      },
     });
 
     const handle = await startUiServer({ port: 0 });
@@ -305,7 +345,7 @@ describe('manual campaign verification', () => {
   it('prepares selected platforms with one shared context and blocks automatic posting until closed', async () => {
     const pages: object[] = [{}];
     const closeHandlers: Array<() => void> = [];
-    const composed: Array<{ platform: string; input: { dryRun?: boolean } }> = [];
+    const composed: Array<{ platform: string; input: { dryRun?: boolean }; submit: boolean }> = [];
     let launchCount = 0;
     let closeCount = 0;
 
@@ -331,11 +371,18 @@ describe('manual campaign verification', () => {
           },
         };
       },
-      isLoggedIn: async () => true,
-      compose: async (platform, _page, input) => {
-        composed.push({ platform, input: input as { dryRun?: boolean } });
+      post: async (platform, input, options) => {
+        composed.push({
+          platform,
+          input: input as { dryRun?: boolean },
+          submit: options.submit,
+        });
+        return {
+          ok: true,
+          status: 'prepared',
+          detail: 'Form filled - submit manually in browser tab',
+        };
       },
-      markValidated: async () => undefined,
     });
 
     const handle = await startUiServer({ port: 0 });
@@ -353,10 +400,9 @@ describe('manual campaign verification', () => {
       expect(body.campaignOk).toBe(true);
       expect(body.results?.map((result) => result.status)).toEqual(['prepared', 'prepared']);
       expect(launchCount).toBe(1);
-      expect(pages).toHaveLength(2);
-      expect(composed.map((entry) => [entry.platform, entry.input.dryRun])).toEqual([
-        ['x', true],
-        ['facebook', true],
+      expect(composed.map((entry) => [entry.platform, entry.submit])).toEqual([
+        ['x', false],
+        ['facebook', false],
       ]);
       await expect(readLedger('x', 'main')).resolves.toEqual([]);
 
@@ -366,7 +412,7 @@ describe('manual campaign verification', () => {
       });
       const automaticBody = (await automaticResponse.json()) as { error?: string };
 
-      expect(automaticResponse.status).toBe(400);
+      expect(automaticResponse.status).toBe(409);
       expect(automaticBody.error).toMatch(/Manual verification browser is open/i);
 
       const historyResponse = await fetch(`${handle.url}/api/history?account=main`);
@@ -394,8 +440,11 @@ describe('manual campaign verification', () => {
     await fs.mkdir(uploadDir, { recursive: true });
     await fs.writeFile(imagePath, 'fake-image');
 
-    const composed: Array<{ platform: string; input: { dryRun?: boolean; imagePath?: string } }> =
-      [];
+    const composed: Array<{
+      platform: string;
+      input: { dryRun?: boolean; imagePath?: string };
+      submit: boolean;
+    }> = [];
     setManualVerifyDriverForTests({
       launch: async () => ({
         context: {
@@ -405,11 +454,18 @@ describe('manual campaign verification', () => {
         } as never,
         close: async () => undefined,
       }),
-      isLoggedIn: async () => true,
-      compose: async (platform, _page, input) => {
-        composed.push({ platform, input: input as { dryRun?: boolean; imagePath?: string } });
+      post: async (platform, input, options) => {
+        composed.push({
+          platform,
+          input: input as { dryRun?: boolean; imagePath?: string },
+          submit: options.submit,
+        });
+        return {
+          ok: true,
+          status: 'prepared',
+          detail: 'Form filled - submit manually in browser tab',
+        };
       },
-      markValidated: async () => undefined,
     });
 
     const form = campaignForm(['instagram']);
@@ -427,36 +483,36 @@ describe('manual campaign verification', () => {
       expect(body.campaignOk).toBe(true);
       expect(composed).toHaveLength(1);
       expect(composed[0]?.platform).toBe('instagram');
-      expect(composed[0]?.input).toMatchObject({ imagePath, dryRun: true });
+      // Manual prepare contracts: submit:false; imagePath flows through input
+      expect(composed[0]?.submit).toBe(false);
+      expect(composed[0]?.input.imagePath).toBe(imagePath);
     } finally {
       await handle.close();
     }
   });
 
-  it('records debug artifact paths when manual preparation fails', async () => {
-    const page = {
-      url: () => 'https://x.com/compose/post',
-      screenshot: async (options: { path: string }) => {
-        await fs.writeFile(options.path, 'fake-png');
-      },
-      content: async () =>
-        '<html><script>secret()</script><body><div>Compose failed</div></body></html>',
-    };
+  it('surfaces debug artifact paths when a platform reports them', async () => {
+    const fakeScreenshotPath = path.join(tmpDir, 'ui', 'debug', 'x-screenshot.png');
+    const fakeDomPath = path.join(tmpDir, 'ui', 'debug', 'x-dom.txt');
+    await fs.mkdir(path.dirname(fakeScreenshotPath), { recursive: true });
+    await fs.writeFile(fakeScreenshotPath, 'fake-png');
+    await fs.writeFile(fakeDomPath, 'fake-dom');
 
     setManualVerifyDriverForTests({
       launch: async () => ({
         context: {
-          pages: () => [page],
-          newPage: async () => page,
+          pages: () => [{}],
+          newPage: async () => ({}),
           on: () => undefined,
         } as never,
         close: async () => undefined,
       }),
-      isLoggedIn: async () => true,
-      compose: async () => {
-        throw new Error('selector drift');
-      },
-      markValidated: async () => undefined,
+      post: async () => ({
+        ok: false,
+        status: 'failed',
+        error: 'selector drift',
+        detail: `selector drift at https://x.com/compose/post — debug: ${fakeScreenshotPath} ${fakeDomPath}`,
+      }),
     });
 
     const handle = await startUiServer({ port: 0 });
@@ -472,17 +528,8 @@ describe('manual campaign verification', () => {
       expect(response.status).toBe(200);
       expect(body.results?.[0]?.error).toBe('selector drift');
       expect(body.results?.[0]?.detail).toContain('https://x.com/compose/post');
-      expect(body.results?.[0]?.detail).toContain(path.join(tmpDir, 'ui', 'debug'));
-
-      const debugFiles = await fs.readdir(path.join(tmpDir, 'ui', 'debug'));
-      expect(debugFiles.some((file) => file.endsWith('.png'))).toBe(true);
-      const domFile = debugFiles.find((file) => file.endsWith('.txt'));
-      expect(domFile).toBeDefined();
-      if (domFile !== undefined) {
-        const domText = await fs.readFile(path.join(tmpDir, 'ui', 'debug', domFile), 'utf8');
-        expect(domText).toContain('Compose failed');
-        expect(domText).not.toContain('secret()');
-      }
+      expect(body.results?.[0]?.detail).toContain(fakeScreenshotPath);
+      expect(body.results?.[0]?.detail).toContain(fakeDomPath);
     } finally {
       await handle.close();
     }
@@ -593,6 +640,149 @@ describe('UI server startup', () => {
     expect(
       isRetryableListenError(Object.assign(new Error('bad host'), { code: 'EADDRNOTAVAIL' })),
     ).toBe(false);
+  });
+});
+
+describe('isForbiddenIp', () => {
+  it('blocks loopback IPv4 addresses', () => {
+    expect(isForbiddenIp('127.0.0.1')).toBe(true);
+    expect(isForbiddenIp('127.255.255.255')).toBe(true);
+  });
+
+  it('blocks 0.0.0.0/8', () => {
+    expect(isForbiddenIp('0.0.0.0')).toBe(true);
+    expect(isForbiddenIp('0.1.2.3')).toBe(true);
+  });
+
+  it('blocks private 10.x range', () => {
+    expect(isForbiddenIp('10.0.0.1')).toBe(true);
+    expect(isForbiddenIp('10.255.255.255')).toBe(true);
+  });
+
+  it('blocks private 192.168.x range', () => {
+    expect(isForbiddenIp('192.168.0.1')).toBe(true);
+    expect(isForbiddenIp('192.168.255.255')).toBe(true);
+  });
+
+  it('blocks private 172.16-31.x range', () => {
+    expect(isForbiddenIp('172.16.0.1')).toBe(true);
+    expect(isForbiddenIp('172.31.255.255')).toBe(true);
+    expect(isForbiddenIp('172.15.0.1')).toBe(false);
+    expect(isForbiddenIp('172.32.0.1')).toBe(false);
+  });
+
+  it('blocks link-local 169.254.x (incl. cloud metadata IP)', () => {
+    expect(isForbiddenIp('169.254.169.254')).toBe(true);
+    expect(isForbiddenIp('169.254.0.1')).toBe(true);
+  });
+
+  it('blocks CGNAT 100.64.0.0/10', () => {
+    expect(isForbiddenIp('100.64.0.1')).toBe(true);
+    expect(isForbiddenIp('100.127.255.255')).toBe(true);
+    expect(isForbiddenIp('100.128.0.1')).toBe(false);
+  });
+
+  it('blocks multicast and reserved ranges', () => {
+    expect(isForbiddenIp('224.0.0.1')).toBe(true);
+    expect(isForbiddenIp('239.255.255.255')).toBe(true);
+    expect(isForbiddenIp('240.0.0.1')).toBe(true);
+    expect(isForbiddenIp('255.255.255.255')).toBe(true);
+  });
+
+  it('allows public IPv4 addresses', () => {
+    expect(isForbiddenIp('8.8.8.8')).toBe(false);
+    expect(isForbiddenIp('1.1.1.1')).toBe(false);
+    expect(isForbiddenIp('93.184.216.34')).toBe(false);
+  });
+
+  it('blocks IPv6 loopback and unspecified', () => {
+    expect(isForbiddenIp('::1')).toBe(true);
+    expect(isForbiddenIp('::')).toBe(true);
+  });
+
+  it('blocks IPv6 ULA (fc00::/7)', () => {
+    expect(isForbiddenIp('fc00::1')).toBe(true);
+    expect(isForbiddenIp('fd12:3456:789a::1')).toBe(true);
+  });
+
+  it('blocks IPv6 link-local (fe80::/10)', () => {
+    expect(isForbiddenIp('fe80::1')).toBe(true);
+    expect(isForbiddenIp('fe80::abcd:ef01')).toBe(true);
+  });
+
+  it('blocks IPv6 multicast (ff00::/8)', () => {
+    expect(isForbiddenIp('ff02::1')).toBe(true);
+  });
+
+  it('blocks IPv4-mapped IPv6 addresses pointing to forbidden IPv4', () => {
+    expect(isForbiddenIp('::ffff:127.0.0.1')).toBe(true);
+    expect(isForbiddenIp('::ffff:10.0.0.1')).toBe(true);
+    expect(isForbiddenIp('::ffff:192.168.1.1')).toBe(true);
+  });
+
+  it('allows IPv4-mapped IPv6 for public IPs', () => {
+    expect(isForbiddenIp('::ffff:8.8.8.8')).toBe(false);
+  });
+
+  it('rejects non-IP strings', () => {
+    expect(isForbiddenIp('not-an-ip')).toBe(true);
+    expect(isForbiddenIp('localhost')).toBe(true);
+  });
+});
+
+describe('safeFetchToBuffer URL validation', () => {
+  const opts = { maxBytes: 1024 * 1024, timeoutMs: 5000, allowedContentTypes: ['image/'] };
+
+  it('rejects file:// URLs', async () => {
+    await expect(safeFetchToBuffer('file:///etc/passwd', opts)).rejects.toThrow(/http or https/i);
+  });
+
+  it('rejects gopher:// URLs', async () => {
+    await expect(safeFetchToBuffer('gopher://example.com', opts)).rejects.toThrow(/http or https/i);
+  });
+
+  it('rejects ftp:// URLs', async () => {
+    await expect(safeFetchToBuffer('ftp://example.com/file', opts)).rejects.toThrow(
+      /http or https/i,
+    );
+  });
+
+  it('rejects literal 127.0.0.1', async () => {
+    await expect(safeFetchToBuffer('http://127.0.0.1/secret', opts)).rejects.toThrow(/forbidden/i);
+  });
+
+  it('rejects literal ::1', async () => {
+    await expect(safeFetchToBuffer('http://[::1]/secret', opts)).rejects.toThrow(/forbidden/i);
+  });
+
+  it('rejects literal 0.0.0.0', async () => {
+    await expect(safeFetchToBuffer('http://0.0.0.0/secret', opts)).rejects.toThrow(/forbidden/i);
+  });
+
+  it('rejects literal 10.x private range', async () => {
+    await expect(safeFetchToBuffer('http://10.0.0.1/secret', opts)).rejects.toThrow(/forbidden/i);
+  });
+
+  it('rejects literal 192.168.x private range', async () => {
+    await expect(safeFetchToBuffer('http://192.168.1.1/secret', opts)).rejects.toThrow(
+      /forbidden/i,
+    );
+  });
+
+  it('rejects literal 172.16.x private range', async () => {
+    await expect(safeFetchToBuffer('http://172.16.0.1/secret', opts)).rejects.toThrow(/forbidden/i);
+  });
+
+  it('rejects AWS/GCP metadata literal IP', async () => {
+    await expect(
+      safeFetchToBuffer('http://169.254.169.254/latest/meta-data/', opts),
+    ).rejects.toThrow(/forbidden/i);
+  });
+
+  it('rejects IPv4-mapped IPv6 pointing to loopback', async () => {
+    await expect(safeFetchToBuffer('http://[::ffff:127.0.0.1]/secret', opts)).rejects.toThrow(
+      /forbidden/i,
+    );
   });
 });
 

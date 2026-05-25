@@ -120,7 +120,7 @@ export async function applyTikTokAuth(
   }
 
   // Warm up the TikTok domain before injecting cookies.
-  const warmupPage = context.pages()[0] ?? (await context.newPage());
+  const warmupPage = await context.newPage();
   await warmupPage.goto(TIKTOK.urls.home, { waitUntil: 'domcontentloaded' });
   await warmupPage.close();
 

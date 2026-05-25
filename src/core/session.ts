@@ -224,10 +224,7 @@ export async function writeMetadata(meta: SessionMetadata): Promise<void> {
   await atomicWriteFile(metadataPath, JSON.stringify(meta, null, 2));
 }
 
-export async function isSessionFresh(
-  platform: Platform,
-  accountId: AccountId,
-): Promise<boolean> {
+export async function isSessionFresh(platform: Platform, accountId: AccountId): Promise<boolean> {
   const paths = await resolveSessionPathsForRead(platform, accountId);
   let meta: SessionMetadata;
   try {

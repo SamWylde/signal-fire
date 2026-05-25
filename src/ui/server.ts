@@ -9,7 +9,6 @@ import {
   migrateLegacyAccountIds,
   sanitizeAccountId,
 } from '../core/account-id.js';
-import { type ResizedVariant, resizeImageForPlatforms } from '../core/imageResize.js';
 import {
   type BrowserContext,
   type LaunchOptions,
@@ -21,7 +20,7 @@ import {
   readStoredCredentials,
   writeStoredCredentials,
 } from '../core/credential-store.js';
-import { captureFailureArtifacts } from '../core/debug-artifacts.js';
+import { type ResizedVariant, resizeImageForPlatforms } from '../core/imageResize.js';
 import { countRecent } from '../core/ledger.js';
 import type { ActionLimits } from '../core/rate-limiter.js';
 import {
@@ -35,6 +34,7 @@ import {
 import type { AccountId, PostResult } from '../core/types.js';
 import { POSTING_PLATFORMS, type PostingPlatform } from '../core/types.js';
 import { REDESIGNED_APP_HTML } from './app-html.js';
+import { safeFetchToBuffer } from './safe-fetch.js';
 
 const LOGIN_URLS: Record<PostingPlatform, string> = {
   tiktok: 'https://www.tiktok.com/login',
@@ -185,18 +185,42 @@ interface ManualVerifySession {
   startedAt: number;
 }
 
-export interface ManualVerifyDriver {
-  launch: (options: LaunchOptions) => Promise<{
-    context: BrowserContext;
-    close: () => Promise<void>;
-  }>;
-  isLoggedIn: (platform: ManualVerifyPlatform, page: Page) => Promise<boolean>;
-  compose: (platform: ManualVerifyPlatform, page: Page, input: unknown) => Promise<void>;
-  markValidated: (platform: ManualVerifyPlatform, accountId: AccountId) => Promise<void>;
-}
+type CampaignMode = 'live' | 'prepare';
+
+type CampaignTestHook = {
+  launch?: (
+    opts: LaunchOptions,
+  ) => Promise<{ context: BrowserContext; close: () => Promise<void> }>;
+  post?: (
+    platform: PostingPlatform,
+    input: unknown,
+    options: {
+      accountId: string;
+      launchOptions: LaunchOptions;
+      rateLimits?: ActionLimits;
+      sharedContext?: BrowserContext;
+      submit: boolean;
+    },
+  ) => Promise<PostResult>;
+};
+
+let campaignTestHook: CampaignTestHook | null = null;
 
 const manualVerifySessions = new Map<string, ManualVerifySession>();
-let manualVerifyDriverOverride: ManualVerifyDriver | null = null;
+
+const pendingManualStarts = new Set<string>(); // accountIds
+
+function acquirePendingManualStart(accountId: string): void {
+  pendingManualStarts.add(accountId);
+}
+
+function releasePendingManualStart(accountId: string): void {
+  pendingManualStarts.delete(accountId);
+}
+
+function isManualStartPending(accountId: string): boolean {
+  return pendingManualStarts.has(accountId);
+}
 
 function acquirePostingLock(accountId: string): void {
   activePosting.set(accountId, (activePosting.get(accountId) ?? 0) + 1);
@@ -212,10 +236,18 @@ function isPostingActive(accountId: string): boolean {
   return (activePosting.get(accountId) ?? 0) > 0;
 }
 
-class ManualVerifyActiveError extends Error {
-  constructor(accountId: string) {
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
+
+export class ManualVerifyActiveError extends ConflictError {
+  constructor(accountId: string, customMessage?: string) {
     super(
-      `Manual verification browser is open for ${accountId}. Close it before running automatic posting.`,
+      customMessage ??
+        `Manual verification browser is open for ${accountId}. Close it before running automatic posting.`,
     );
     this.name = 'ManualVerifyActiveError';
   }
@@ -229,8 +261,8 @@ export function unsupportedManualVerifyTargets(targets: PostingPlatform[]): Post
   return targets.filter((target) => !isManualVerifyPlatform(target));
 }
 
-export function setManualVerifyDriverForTests(driver: ManualVerifyDriver | null): void {
-  manualVerifyDriverOverride = driver;
+export function setManualVerifyDriverForTests(hook: CampaignTestHook | null): void {
+  campaignTestHook = hook;
 }
 
 function getManualVerifyKey(accountId: string): string {
@@ -255,10 +287,22 @@ function isLoginFlowActiveForAccount(accountId: string): boolean {
 }
 
 function assertNoManualVerifyForAutomaticPost(accountId: string): void {
+  if (isManualStartPending(accountId)) {
+    throw new ManualVerifyActiveError(
+      accountId,
+      `Manual prepare is starting for account "${accountId}". Wait for it to finish before automatic posting.`,
+    );
+  }
   if (isManualVerifyActive(accountId)) throw new ManualVerifyActiveError(accountId);
 }
 
 function assertCanStartManualVerify(accountId: string): void {
+  if (isManualStartPending(accountId)) {
+    throw new ManualVerifyActiveError(
+      accountId,
+      `Manual prepare is already starting for account "${accountId}". Wait for it to finish.`,
+    );
+  }
   if (isPostingActiveForAccount(accountId)) {
     throw new Error('A posting flow is active for this account. Wait for it to complete first.');
   }
@@ -595,7 +639,24 @@ async function saveDraftFile(
   const kind = formString(form, 'kind');
   if (
     kind === undefined ||
-    !['image', 'video', 'cover', 'thumbnail', 'linkedinImage', 'linkedinVideo', 'xImage', 'xVideo', 'facebookImage', 'facebookVideo', 'instagramImage', 'instagramVideo', 'tiktokImage', 'tiktokVideo', 'youtubeImage', 'youtubeVideo'].includes(kind)
+    ![
+      'image',
+      'video',
+      'cover',
+      'thumbnail',
+      'linkedinImage',
+      'linkedinVideo',
+      'xImage',
+      'xVideo',
+      'facebookImage',
+      'facebookVideo',
+      'instagramImage',
+      'instagramVideo',
+      'tiktokImage',
+      'tiktokVideo',
+      'youtubeImage',
+      'youtubeVideo',
+    ].includes(kind)
   ) {
     throw new Error('Draft file kind is required');
   }
@@ -1103,19 +1164,35 @@ async function invokePost(
   accountId: string,
   launchOptions: LaunchOptions,
   rateLimits: ActionLimits | undefined,
+  sharedContext: BrowserContext | undefined,
+  submit: boolean,
 ): Promise<PostResult> {
+  const options: {
+    accountId: string;
+    launchOptions: LaunchOptions;
+    rateLimits?: ActionLimits;
+    sharedContext?: BrowserContext;
+    submit: boolean;
+  } = { accountId, launchOptions, submit };
+  if (rateLimits !== undefined) options.rateLimits = rateLimits;
+  if (sharedContext !== undefined) options.sharedContext = sharedContext;
+
+  if (campaignTestHook?.post !== undefined) {
+    return campaignTestHook.post(platform, input, options);
+  }
+
   const mod = (await import(`../platforms/${platform}/index.js`)) as {
     post: (
       input: unknown,
-      options: { accountId: string; launchOptions: LaunchOptions; rateLimits?: ActionLimits },
+      options: {
+        accountId: string;
+        launchOptions: LaunchOptions;
+        rateLimits?: ActionLimits;
+        sharedContext?: BrowserContext;
+        submit?: boolean;
+      },
     ) => Promise<PostResult>;
   };
-
-  const options: { accountId: string; launchOptions: LaunchOptions; rateLimits?: ActionLimits } = {
-    accountId,
-    launchOptions,
-  };
-  if (rateLimits !== undefined) options.rateLimits = rateLimits;
 
   return mod.post(input, options);
 }
@@ -1293,6 +1370,8 @@ async function runPost(form: FormData): Promise<PostResult> {
       accountId,
       await buildLaunchOptions(platformRaw, accountId, form),
       buildRateLimits(form),
+      undefined,
+      true,
     );
   } finally {
     releasePostingLock(accountId);
@@ -1516,15 +1595,15 @@ function buildCampaignInput(
 
   switch (platform) {
     case 'tiktok': {
-      const videoPath = assets.platformVideos?.['tiktok'] ?? assets.videoPath;
+      const videoPath = assets.platformVideos?.tiktok ?? assets.videoPath;
       if (videoPath === undefined) throw new Error('Video is required for TikTok');
       const tiktokHashtags = formString(form, 'tiktokHashtags') ?? hashtagsForCampaign(form);
       const tiktokDescriptionBase =
         formString(form, 'tiktokText') ?? formString(form, 'text') ?? description;
       const tiktokDescription =
         tiktokDescriptionBase !== undefined && tiktokHashtags !== undefined
-          ? tiktokDescriptionBase + '\n\n' + tiktokHashtags
-          : tiktokDescriptionBase ?? (tiktokHashtags !== undefined ? tiktokHashtags : undefined);
+          ? `${tiktokDescriptionBase}\n\n${tiktokHashtags}`
+          : (tiktokDescriptionBase ?? (tiktokHashtags !== undefined ? tiktokHashtags : undefined));
       if (tiktokDescription === undefined)
         throw new Error('Text or description is required for TikTok');
       const productId = formString(form, 'productId');
@@ -1545,7 +1624,10 @@ function buildCampaignInput(
     case 'x': {
       const xHashtags = formString(form, 'xHashtags') ?? hashtagsForCampaign(form);
       const xTextBase = formString(form, 'xText') ?? text;
-      const xText = xTextBase !== undefined && xHashtags !== undefined ? xTextBase + '\n\n' + xHashtags : xTextBase;
+      const xText =
+        xTextBase !== undefined && xHashtags !== undefined
+          ? `${xTextBase}\n\n${xHashtags}`
+          : xTextBase;
       if (xText === undefined) throw new Error('Text is required for X');
       const mediaPaths = [assets.videoPath, assets.imagePath].filter(
         (item): item is string => item !== undefined,
@@ -1564,7 +1646,10 @@ function buildCampaignInput(
     case 'facebook': {
       const facebookHashtags = formString(form, 'facebookHashtags') ?? hashtagsForCampaign(form);
       const facebookTextBase = formString(form, 'facebookText') ?? text;
-      const facebookText = facebookTextBase !== undefined && facebookHashtags !== undefined ? facebookTextBase + '\n\n' + facebookHashtags : facebookTextBase;
+      const facebookText =
+        facebookTextBase !== undefined && facebookHashtags !== undefined
+          ? `${facebookTextBase}\n\n${facebookHashtags}`
+          : facebookTextBase;
       const pageUrl = formString(form, 'pageUrl');
       if (pageUrl === undefined) throw new Error('Facebook page URL is required');
       if (facebookText === undefined) throw new Error('Text is required for Facebook');
@@ -1580,8 +1665,8 @@ function buildCampaignInput(
         );
         postAs = 'personal';
       }
-      const facebookImagePath = assets.platformImages?.['facebook'] ?? assets.imagePath;
-      const facebookVideoPath = assets.platformVideos?.['facebook'] ?? assets.videoPath;
+      const facebookImagePath = assets.platformImages?.facebook ?? assets.imagePath;
+      const facebookVideoPath = assets.platformVideos?.facebook ?? assets.videoPath;
       return {
         pageUrl,
         text: facebookText,
@@ -1597,7 +1682,10 @@ function buildCampaignInput(
     case 'linkedin': {
       const linkedinHashtags = formString(form, 'linkedinHashtags') ?? hashtagsForCampaign(form);
       const linkedinTextBase = formString(form, 'linkedinText') ?? text;
-      const linkedinText = linkedinTextBase !== undefined && linkedinHashtags !== undefined ? linkedinTextBase + '\n\n' + linkedinHashtags : linkedinTextBase;
+      const linkedinText =
+        linkedinTextBase !== undefined && linkedinHashtags !== undefined
+          ? `${linkedinTextBase}\n\n${linkedinHashtags}`
+          : linkedinTextBase;
       if (linkedinText === undefined) throw new Error('Text is required for LinkedIn');
       const target = formString(form, 'linkedinTarget') === 'company' ? 'company' : 'profile';
       const companyPageUrl = formString(form, 'linkedinCompanyPageUrl');
@@ -1609,7 +1697,7 @@ function buildCampaignInput(
         formString(form, 'linkedinPostType') === 'article' ? 'article' : 'post';
       const linkedinTitle = formString(form, 'linkedinTitle');
       const linkedinShareIntro = formString(form, 'linkedinShareIntro');
-      const linkedinImagePath = assets.platformImages?.['linkedin'] ?? assets.imagePath;
+      const linkedinImagePath = assets.platformImages?.linkedin ?? assets.imagePath;
       return {
         text: linkedinText,
         typingSpeedMultiplier: typingSpeed,
@@ -1627,8 +1715,11 @@ function buildCampaignInput(
       const youtubeTitle = formString(form, 'youtubeBaseTitle') ?? title;
       const youtubeHashtags = formString(form, 'youtubeHashtags') ?? hashtagsForCampaign(form);
       const youtubeDescriptionBase = formString(form, 'youtubeText') ?? description;
-      const youtubeDescription = youtubeDescriptionBase !== undefined && youtubeHashtags !== undefined ? youtubeDescriptionBase + '\n\n' + youtubeHashtags : youtubeDescriptionBase;
-      const youtubeVideoPath = assets.platformVideos?.['youtube'] ?? assets.videoPath;
+      const youtubeDescription =
+        youtubeDescriptionBase !== undefined && youtubeHashtags !== undefined
+          ? `${youtubeDescriptionBase}\n\n${youtubeHashtags}`
+          : youtubeDescriptionBase;
+      const youtubeVideoPath = assets.platformVideos?.youtube ?? assets.videoPath;
       if (youtubeVideoPath === undefined) throw new Error('Video is required for YouTube');
       if (youtubeTitle === undefined) throw new Error('Title is required for YouTube');
       const tags = campaignTags(form);
@@ -1650,9 +1741,12 @@ function buildCampaignInput(
     case 'instagram': {
       const instagramHashtags = formString(form, 'instagramHashtags') ?? hashtagsForCampaign(form);
       const instagramCaptionBase = formString(form, 'instagramText') ?? text;
-      const instagramCaption = instagramCaptionBase !== undefined && instagramHashtags !== undefined ? instagramCaptionBase + '\n\n' + instagramHashtags : instagramCaptionBase;
-      const instagramImagePath = assets.platformImages?.['instagram'] ?? assets.imagePath;
-      const instagramVideoPath = assets.platformVideos?.['instagram'] ?? assets.videoPath;
+      const instagramCaption =
+        instagramCaptionBase !== undefined && instagramHashtags !== undefined
+          ? `${instagramCaptionBase}\n\n${instagramHashtags}`
+          : instagramCaptionBase;
+      const instagramImagePath = assets.platformImages?.instagram ?? assets.imagePath;
+      const instagramVideoPath = assets.platformVideos?.instagram ?? assets.videoPath;
       if (instagramImagePath === undefined) throw new Error('Image is required for Instagram');
       return {
         imagePath: instagramImagePath,
@@ -1663,96 +1757,6 @@ function buildCampaignInput(
       };
     }
   }
-}
-
-export function buildManualCampaignInput(
-  platform: ManualVerifyPlatform,
-  form: FormData,
-  assets: CampaignAssets,
-): unknown {
-  const input = buildCampaignInput(platform, form, assets, true);
-  if (typeof input !== 'object' || input === null) return input;
-  return { ...input, dryRun: true };
-}
-
-async function isManualPlatformLoggedIn(
-  platform: ManualVerifyPlatform,
-  page: Page,
-): Promise<boolean> {
-  switch (platform) {
-    case 'facebook': {
-      const auth = (await import('../platforms/facebook/auth.js')) as {
-        isLoggedIn: (page: Page) => Promise<boolean>;
-      };
-      return auth.isLoggedIn(page);
-    }
-    case 'instagram': {
-      const auth = (await import('../platforms/instagram/auth.js')) as {
-        isLoggedIn: (page: Page) => Promise<boolean>;
-      };
-      return auth.isLoggedIn(page);
-    }
-    case 'linkedin': {
-      const auth = (await import('../platforms/linkedin/auth.js')) as {
-        isLoggedIn: (page: Page) => Promise<boolean>;
-      };
-      return auth.isLoggedIn(page);
-    }
-    case 'x': {
-      const auth = (await import('../platforms/x/auth.js')) as {
-        isLoggedIn: (page: Page) => Promise<boolean>;
-      };
-      return auth.isLoggedIn(page);
-    }
-  }
-}
-
-async function composeManualPlatform(
-  platform: ManualVerifyPlatform,
-  page: Page,
-  input: unknown,
-): Promise<void> {
-  switch (platform) {
-    case 'facebook': {
-      const composer = (await import('../platforms/facebook/compose.js')) as {
-        createPost: (page: Page, input: unknown) => Promise<unknown>;
-      };
-      await composer.createPost(page, input);
-      return;
-    }
-    case 'instagram': {
-      const composer = (await import('../platforms/instagram/composer.js')) as {
-        createPost: (page: Page, input: unknown) => Promise<unknown>;
-      };
-      await composer.createPost(page, input);
-      return;
-    }
-    case 'linkedin': {
-      const composer = (await import('../platforms/linkedin/compose.js')) as {
-        createPost: (page: Page, input: unknown) => Promise<unknown>;
-      };
-      await composer.createPost(page, input);
-      return;
-    }
-    case 'x': {
-      const composer = (await import('../platforms/x/compose.js')) as {
-        postTweet: (page: Page, input: unknown) => Promise<unknown>;
-      };
-      await composer.postTweet(page, input);
-      return;
-    }
-  }
-}
-
-function getManualVerifyDriver(): ManualVerifyDriver {
-  return (
-    manualVerifyDriverOverride ?? {
-      launch: launchBrowser,
-      isLoggedIn: isManualPlatformLoggedIn,
-      compose: composeManualPlatform,
-      markValidated: markUserDataDirValidated,
-    }
-  );
 }
 
 async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
@@ -1789,130 +1793,205 @@ async function collectCampaignAssets(form: FormData): Promise<CampaignAssets> {
 async function runCampaignNow(
   form: FormData,
   assets: CampaignAssets,
-  historyMeta: { queueId?: string; scheduledAt?: string } = {},
-  runImmediate?: boolean,
+  opts: {
+    mode?: CampaignMode;
+    historyMeta?: { queueId?: string; scheduledAt?: string };
+    runImmediate?: boolean;
+  } = {},
 ): Promise<{ ok: boolean; results: CampaignResult[] }> {
+  const mode = opts.mode ?? 'live';
+  const historyMeta = opts.historyMeta ?? {};
+  const runImmediate = opts.runImmediate;
+
   const accountId = campaignAccount(form);
-  assertNoManualVerifyForAutomaticPost(accountId);
+  if (mode === 'live') {
+    assertNoManualVerifyForAutomaticPost(accountId);
+  }
   acquirePostingLock(accountId);
   try {
     const targets = campaignTargets(form);
+
+    if (mode === 'prepare') {
+      const unsupported = unsupportedManualVerifyTargets(targets);
+      if (unsupported.length > 0) {
+        throw new Error(
+          `Manual verify currently supports LinkedIn, X, Facebook, and Instagram. Remove: ${unsupported.join(', ')}`,
+        );
+      }
+    }
+
+    const startLabel =
+      mode === 'live'
+        ? `Live posting started for ${targets.length} platform${targets.length === 1 ? '' : 's'}`
+        : `Manual prepare started for ${targets.length} platform${targets.length === 1 ? '' : 's'}`;
     await appendRunLog({
       account: accountId,
       scope: 'campaign',
       level: 'info',
-      message: `Live posting started for ${targets.length} platform${targets.length === 1 ? '' : 's'}`,
+      message: startLabel,
       detail: targets.join(', '),
     });
+
     const delayRange = parseCampaignDelayRangeMs(
       formString(form, 'campaignDelayMinSeconds'),
       formString(form, 'campaignDelayMaxSeconds'),
       formString(form, 'campaignDelaySeconds'),
     );
-    const rateLimits = buildRateLimits(form);
+    const rateLimits = mode === 'live' ? buildRateLimits(form) : undefined;
+    const submit = mode === 'live';
     const results: CampaignResult[] = [];
     const preview = textPreview(textForCampaign(form));
 
-    for (const [index, platform] of targets.entries()) {
-      let attemptedPost = false;
-      try {
-        await appendRunLog({
-          account: accountId,
-          platform,
-          scope: 'campaign',
-          level: 'info',
-          message: 'Preparing live post',
-        });
-        const input = buildCampaignInput(platform, form, assets, runImmediate);
-        attemptedPost = true;
-        const launchOptions = await buildLaunchOptions(platform, accountId, form);
-        await appendRunLog({
-          account: accountId,
-          platform,
-          scope: 'campaign',
-          level: 'info',
-          message: 'Opening browser and composer',
-        });
-        const result = await invokePost(platform, input, accountId, launchOptions, rateLimits);
-        const resultStatus = postResultStatus(result);
-        const resultDetail = postResultDetail(result);
-        results.push({
-          platform,
-          ok: result.ok,
-          status: resultStatus,
-          ...(result.url !== undefined && { url: result.url }),
-          ...(result.error !== undefined && { error: result.error }),
-          ...(resultDetail !== undefined && { detail: resultDetail }),
-        });
-        await appendRunLog({
-          account: accountId,
-          platform,
-          scope: 'campaign',
-          level: postResultLogLevel(result),
-          message: postResultLogMessage(result),
-          ...(resultDetail !== undefined && { detail: resultDetail }),
-        });
+    let sharedContext: BrowserContext | null = null;
+    let closeSharedContext: (() => Promise<void>) | null = null;
 
-        if (result.ok) {
-          try {
-            await markUserDataDirValidated(platform, accountId);
-          } catch (err) {
-            console.error('Failed to update lastValidated after successful post:', err);
-          }
-        }
+    if (targets.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const ownerPlatform =
+        // biome-ignore lint/style/noNonNullAssertion: guarded by targets.length > 0 check above
+        mode === 'live' ? targets[0]! : targets.includes('x') ? 'x' : targets[0]!;
+      const ownerLaunchOptions = await buildLaunchOptions(ownerPlatform, accountId, form);
+      const launched =
+        campaignTestHook?.launch !== undefined
+          ? await campaignTestHook.launch(ownerLaunchOptions)
+          : await launchBrowser(ownerLaunchOptions);
+      sharedContext = launched.context;
+      closeSharedContext = launched.close;
 
-        if (
-          !result.ok &&
-          result.error !== undefined &&
-          shouldStopCampaignAfterError(result.error)
-        ) {
-          appendSafetySkippedResults(results, targets, index);
-          break;
-        }
-      } catch (err) {
-        results.push({
-          platform,
-          ok: false,
-          status: 'failed',
-          error: err instanceof Error ? err.message : String(err),
-        });
-        await appendRunLog({
-          account: accountId,
-          platform,
-          scope: 'campaign',
-          level: 'error',
-          message: 'Live post failed',
-          detail: err instanceof Error ? err.message : String(err),
-        });
-
-        const error = results.at(-1)?.error ?? '';
-        if (shouldStopCampaignAfterError(error)) {
-          appendSafetySkippedResults(results, targets, index);
-          break;
-        }
-      }
-
-      const delayMs = randomDelayMs(delayRange);
-      if (attemptedPost && index < targets.length - 1 && delayMs > 0) {
-        await appendRunLog({
-          account: accountId,
-          platform,
-          scope: 'campaign',
-          level: 'info',
-          message: 'Waiting before next platform',
-          detail: `${Math.round(delayMs / 1000)} seconds`,
-        });
-        await delay(delayMs);
+      if (mode === 'prepare') {
+        trackManualVerifySession(accountId, sharedContext, closeSharedContext);
       }
     }
 
+    try {
+      for (const [index, platform] of targets.entries()) {
+        let attemptedPost = false;
+        try {
+          const prepareLabel = mode === 'live' ? 'Preparing live post' : 'Preparing manual post';
+          await appendRunLog({
+            account: accountId,
+            platform,
+            scope: 'campaign',
+            level: 'info',
+            message: prepareLabel,
+          });
+          const input = buildCampaignInput(platform, form, assets, runImmediate);
+          attemptedPost = true;
+          const launchOptions = await buildLaunchOptions(platform, accountId, form);
+          await appendRunLog({
+            account: accountId,
+            platform,
+            scope: 'campaign',
+            level: 'info',
+            message: 'Opening browser and composer',
+          });
+          const result = await invokePost(
+            platform,
+            input,
+            accountId,
+            launchOptions,
+            rateLimits,
+            sharedContext ?? undefined,
+            submit,
+          );
+          const resultStatus = postResultStatus(result);
+          const resultDetail = postResultDetail(result);
+          results.push({
+            platform,
+            ok: result.ok,
+            status: resultStatus,
+            ...(result.url !== undefined && { url: result.url }),
+            ...(result.error !== undefined && { error: result.error }),
+            ...(resultDetail !== undefined && { detail: resultDetail }),
+          });
+
+          const successMsg =
+            mode === 'live'
+              ? postResultLogMessage(result)
+              : result.ok
+                ? 'Form filled; waiting for manual submit'
+                : 'Manual prepare failed';
+          await appendRunLog({
+            account: accountId,
+            platform,
+            scope: 'campaign',
+            level: postResultLogLevel(result),
+            message: successMsg,
+            ...(resultDetail !== undefined && { detail: resultDetail }),
+          });
+
+          if (mode === 'live') {
+            if (
+              !result.ok &&
+              result.error !== undefined &&
+              shouldStopCampaignAfterError(result.error)
+            ) {
+              appendSafetySkippedResults(results, targets, index);
+              break;
+            }
+          }
+        } catch (err) {
+          results.push({
+            platform,
+            ok: false,
+            status: 'failed',
+            error: err instanceof Error ? err.message : String(err),
+          });
+          const errLabel = mode === 'live' ? 'Live post failed' : 'Manual prepare failed';
+          await appendRunLog({
+            account: accountId,
+            platform,
+            scope: 'campaign',
+            level: 'error',
+            message: errLabel,
+            detail: err instanceof Error ? err.message : String(err),
+          });
+
+          if (mode === 'live') {
+            const error = results.at(-1)?.error ?? '';
+            if (shouldStopCampaignAfterError(error)) {
+              appendSafetySkippedResults(results, targets, index);
+              break;
+            }
+          }
+        }
+
+        if (mode === 'live') {
+          const delayMs = randomDelayMs(delayRange);
+          if (attemptedPost && index < targets.length - 1 && delayMs > 0) {
+            await appendRunLog({
+              account: accountId,
+              platform,
+              scope: 'campaign',
+              level: 'info',
+              message: 'Waiting before next platform',
+              detail: `${Math.round(delayMs / 1000)} seconds`,
+            });
+            await delay(delayMs);
+          }
+        }
+      }
+    } finally {
+      if (mode === 'live' && closeSharedContext) {
+        // TEMP (testing tab-sharing): keep the shared browser open after campaign so the user can
+        // inspect tabs. Re-enable the close once we're done testing.
+        // try { await closeSharedContext(); } catch {}
+      }
+      // mode === 'prepare': trackManualVerifySession owns the browser lifecycle.
+    }
+
+    const finishLabel = mode === 'live' ? 'Live posting finished' : 'Manual prepare finished';
+    const finishDetail =
+      mode === 'live'
+        ? `${results.filter((result) => result.ok).length}/${results.length} succeeded`
+        : `${results.filter((result) => result.ok).length}/${results.length} prepared`;
     await appendHistory(historyFromResults(results, accountId, preview, historyMeta));
     await appendRunLog({
       account: accountId,
       scope: 'campaign',
       level: results.every((result) => result.ok) ? 'success' : 'warn',
-      message: 'Live posting finished',
-      detail: `${results.filter((result) => result.ok).length}/${results.length} succeeded`,
+      message: finishLabel,
+      detail: finishDetail,
     });
     return { ok: results.every((result) => result.ok), results };
   } finally {
@@ -1939,197 +2018,38 @@ async function runCampaign(
 
   // Schedule is absent or stale (past) — run immediately without forwarding the schedule field
   const runImmediate = schedule !== undefined;
-  return runCampaignNow(form, assets, {}, runImmediate);
+  return runCampaignNow(form, assets, { runImmediate });
 }
 
-async function runManualCampaign(
+async function runPrepareCampaign(
   form: FormData,
 ): Promise<{ ok: boolean; results: CampaignResult[] }> {
   const accountId = campaignAccount(form);
-  assertCanStartManualVerify(accountId);
-
   const targets = campaignTargets(form);
-  await appendRunLog({
-    account: accountId,
-    scope: 'manual',
-    level: 'info',
-    message: `Manual prepare requested for ${targets.length} platform${targets.length === 1 ? '' : 's'}`,
-    detail: targets.join(', '),
-  });
+
+  // Pre-filter unsupported targets BEFORE asset collection or browser launch.
   const unsupported = unsupportedManualVerifyTargets(targets);
   if (unsupported.length > 0) {
-    await appendRunLog({
-      account: accountId,
-      scope: 'manual',
-      level: 'error',
-      message: 'Manual prepare rejected',
-      detail: `Unsupported targets: ${unsupported.join(', ')}`,
-    });
     throw new Error(
-      `Manual verify currently supports LinkedIn, X, Facebook, and Instagram. Remove: ${unsupported
-        .map((platform) => platform)
-        .join(', ')}`,
+      `Manual verify currently supports LinkedIn, X, Facebook, and Instagram. Remove: ${unsupported.join(', ')}`,
     );
   }
 
-  const manualTargets = targets.filter(isManualVerifyPlatform);
-  const assets = await collectCampaignAssets(form);
-  const driver = getManualVerifyDriver();
-  const ownerPlatform = manualTargets.includes('x') ? 'x' : manualTargets[0];
-  if (ownerPlatform === undefined) throw new Error('Choose at least one manual verify platform');
-
-  const launchOptions = await buildLaunchOptions(ownerPlatform, accountId, form);
-  await appendRunLog({
-    account: accountId,
-    scope: 'manual',
-    level: 'info',
-    message: 'Opening shared manual verification browser',
-    detail: `Profile owner: ${ownerPlatform}`,
-  });
-  const { context, close } = await driver.launch(launchOptions);
-  trackManualVerifySession(accountId, context, close);
-  await appendRunLog({
-    account: accountId,
-    scope: 'manual',
-    level: 'success',
-    message: 'Manual verification browser opened',
-    detail: 'Tabs stay open so you can submit manually',
-  });
-
-  const existingPages = context.pages();
-  const preview = textPreview(textForCampaign(form));
-  const results: CampaignResult[] = [];
-
-  for (const [index, platform] of manualTargets.entries()) {
-    const page =
-      index === 0 ? (existingPages[0] ?? (await context.newPage())) : await context.newPage();
-
-    try {
-      await appendRunLog({
-        account: accountId,
-        platform,
-        scope: 'manual',
-        level: 'info',
-        message: `Preparing tab ${index + 1} of ${manualTargets.length}`,
-      });
-      await appendRunLog({
-        account: accountId,
-        platform,
-        scope: 'manual',
-        level: 'info',
-        message: 'Checking logged-in session',
-      });
-      const loggedIn = await driver.isLoggedIn(platform, page);
-      if (!loggedIn) {
-        await appendRunLog({
-          account: accountId,
-          platform,
-          scope: 'manual',
-          level: 'warn',
-          message: 'Platform is not logged in',
-          detail: 'Log in in the open tab, then rerun Prepare',
-        });
-        results.push({
-          platform,
-          ok: false,
-          status: 'failed',
-          error: 'not-logged-in',
-          detail: 'Not logged in - log in in this tab, then rerun Prepare',
-        });
-        continue;
-      }
-
-      await driver.markValidated(platform, accountId);
-      await appendRunLog({
-        account: accountId,
-        platform,
-        scope: 'manual',
-        level: 'success',
-        message: 'Session validated',
-      });
-      await appendRunLog({
-        account: accountId,
-        platform,
-        scope: 'manual',
-        level: 'info',
-        message: 'Opening composer and filling form',
-      });
-      const input = buildManualCampaignInput(platform, form, assets);
-      const inputWithLogger =
-        typeof input === 'object' && input !== null
-          ? {
-              ...input,
-              onLog: (message: string, detail?: string) => {
-                void appendRunLog({
-                  account: accountId,
-                  platform,
-                  scope: 'manual',
-                  level: 'info',
-                  message,
-                  ...(detail !== undefined && { detail }),
-                });
-              },
-            }
-          : input;
-      await driver.compose(platform, page, inputWithLogger);
-      results.push({
-        platform,
-        ok: true,
-        status: 'prepared',
-        detail: 'Form filled - submit manually in browser tab',
-      });
-      await appendRunLog({
-        account: accountId,
-        platform,
-        scope: 'manual',
-        level: 'success',
-        message: 'Form filled; waiting for manual submit',
-      });
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      const debugDetail = await captureFailureArtifacts(platform, page)
-        .then((artifacts) => artifacts.summary)
-        .catch(
-          (artifactErr) =>
-            `Debug artifact capture failed: ${
-              artifactErr instanceof Error ? artifactErr.message : String(artifactErr)
-            }`,
-        );
-      results.push({
-        platform,
-        ok: false,
-        status: 'failed',
-        error: errorMessage,
-        detail: debugDetail,
-      });
-      await appendRunLog({
-        account: accountId,
-        platform,
-        scope: 'manual',
-        level: 'error',
-        message: 'Manual prepare failed',
-        detail: `${errorMessage}\n${debugDetail}`,
-      });
-    }
+  assertCanStartManualVerify(accountId);
+  acquirePendingManualStart(accountId);
+  try {
+    const assets = await collectCampaignAssets(form);
+    return await runCampaignNow(form, assets, { mode: 'prepare', runImmediate: true });
+  } finally {
+    releasePendingManualStart(accountId);
   }
-
-  await appendHistory(historyFromResults(results, accountId, preview));
-  await appendRunLog({
-    account: accountId,
-    scope: 'manual',
-    level: results.every((result) => result.ok) ? 'success' : 'warn',
-    message: 'Manual prepare finished',
-    detail: `${results.filter((result) => result.ok).length}/${results.length} prepared`,
-  });
-  return { ok: results.every((result) => result.ok), results };
 }
 
 async function runQueuedCampaign(
   entry: QueueEntry,
 ): Promise<{ ok: boolean; results: CampaignResult[] }> {
   return runCampaignNow(buildStoredCampaignForm(entry), entry.assets, {
-    queueId: entry.id,
-    scheduledAt: entry.scheduledAt,
+    historyMeta: { queueId: entry.id, scheduledAt: entry.scheduledAt },
   });
 }
 
@@ -2601,6 +2521,59 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
     return;
   }
 
+  if (req.method === 'POST' && url.pathname === '/api/draft-file-from-url') {
+    const form = await readForm(req);
+    const kind = formString(form, 'kind');
+    const rawUrl = formString(form, 'url');
+    if (!kind || !rawUrl) throw new Error('kind and url are required');
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      throw new Error('URL must be http or https');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('URL must be http or https');
+    }
+    const { buffer, contentType: fetchedContentType } = await safeFetchToBuffer(rawUrl, {
+      maxBytes: MAX_UPLOAD_BYTES,
+      timeoutMs: 30_000,
+      allowedContentTypes: ['image/', 'video/'],
+    });
+    // Re-derive parsed after safeFetchToBuffer (which may have followed redirects).
+    // We still use the original `parsed` for filename extraction — redirect targets
+    // are an internal detail.
+    let filename: string;
+    filename = parsed.pathname.split('/').pop() ?? 'download';
+    if (!filename) filename = 'download';
+    filename = filename.split('?')[0] ?? 'download';
+    const contentType = fetchedContentType || 'application/octet-stream';
+    if (path.extname(filename) === '') {
+      const extByType: Record<string, string> = {
+        'image/png': '.png',
+        'image/jpeg': '.jpg',
+        'image/jpg': '.jpg',
+        'image/gif': '.gif',
+        'image/webp': '.webp',
+        'image/svg+xml': '.svg',
+        'image/avif': '.avif',
+      };
+      const ext = extByType[contentType];
+      if (ext) filename += ext;
+    }
+    const file = new File([new Uint8Array(buffer)], filename, { type: contentType });
+    const synth = new FormData();
+    synth.set('kind', kind);
+    synth.set('file', file);
+    const { file: ref, imageResizeError } = await saveDraftFile(synth);
+    sendJson(res, 200, {
+      ok: true,
+      file: ref,
+      ...(imageResizeError !== undefined && { imageResizeError }),
+    });
+    return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/api/draft-file') {
     const rawPath = url.searchParams.get('path') ?? '';
     const resolvedPath = path.resolve(rawPath);
@@ -2715,9 +2688,10 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       return;
     }
     const queue = await loadQueue();
-    const filtered = queue.filter((entry) =>
-      entry.account !== account ||
-      (entry.status !== 'posted' && entry.status !== 'failed' && entry.status !== 'canceled')
+    const filtered = queue.filter(
+      (entry) =>
+        entry.account !== account ||
+        (entry.status !== 'posted' && entry.status !== 'failed' && entry.status !== 'canceled'),
     );
     await saveQueue(filtered);
     sendJson(res, 200, { ok: true, removed: queue.length - filtered.length });
@@ -2916,7 +2890,7 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
   }
 
   if (req.method === 'POST' && url.pathname === '/api/campaign/manual') {
-    const result = await runManualCampaign(await readForm(req));
+    const result = await runPrepareCampaign(await readForm(req));
     sendJson(res, 200, {
       ok: true,
       campaignOk: result.ok,
@@ -2938,7 +2912,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       message: `${req.method ?? 'REQUEST'} ${req.url ?? ''} failed`,
       detail: err instanceof Error ? err.message : String(err),
     });
-    sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+    if (err instanceof ConflictError) {
+      sendJson(res, 409, { ok: false, error: err.message });
+    } else {
+      sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
   }
 }
 
@@ -2983,6 +2961,13 @@ function formatPortCandidate(port: number): string {
 
 export async function startUiServer(options: UiServerOptions = {}): Promise<UiServerHandle> {
   await migrateLegacyAccountIds();
+
+  // Clear persisted run-log so the Logs tab only shows the current session.
+  try {
+    await clearRunLog();
+  } catch (err) {
+    process.stderr.write(`[signal-fire] could not clear run log on startup: ${err}\n`);
+  }
 
   const host = options.host ?? '127.0.0.1';
   const preferredPort = options.port ?? 4317;

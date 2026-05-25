@@ -155,7 +155,7 @@ export async function applyXAuth(context: BrowserContext, input: XAuthInput): Pr
   cookies = remapTwitterToX(cookies);
 
   // Warmup: establish the X domain in the browser before injecting cookies.
-  const warmupPage = context.pages()[0] ?? (await context.newPage());
+  const warmupPage = await context.newPage();
   await warmupPage.goto(X.urls.home, { waitUntil: 'domcontentloaded' });
   await warmupPage.close();
 

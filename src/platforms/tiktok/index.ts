@@ -1,4 +1,10 @@
-import { type LaunchOptions, launchBrowser } from '../../core/browser.js';
+import {
+  type BrowserContext,
+  type LaunchOptions,
+  type Page,
+  assertNotQuarantined,
+  launchBrowser,
+} from '../../core/browser.js';
 import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
@@ -19,6 +25,8 @@ export interface TikTokPostOptions {
   auth?: TikTokAuthInput;
   launchOptions?: Partial<LaunchOptions>;
   rateLimits?: ActionLimits;
+  sharedContext?: BrowserContext;
+  submit?: boolean;
 }
 
 /**
@@ -28,6 +36,14 @@ export interface TikTokPostOptions {
  * records the action, saves session, and returns a result.
  */
 export async function post(input: UploadInput, options: TikTokPostOptions): Promise<PostResult> {
+  if (options.submit === false) {
+    return {
+      ok: false,
+      error: 'manual-prepare-unsupported',
+      detail: 'TikTok uses upload flow; prepare mode is not supported',
+    };
+  }
+
   const { accountId, auth, launchOptions, rateLimits } = options;
 
   // 1. Validate schedule before doing anything async
@@ -50,48 +66,79 @@ export async function post(input: UploadInput, options: TikTokPostOptions): Prom
     platform: 'tiktok',
   };
 
-  const { context, close } = await launchBrowser(mergedLaunchOptions);
+  await assertNotQuarantined('tiktok', accountId);
 
-  // 4. Apply auth if provided
-  if (auth !== undefined) {
-    const authResult = await applyTikTokAuth(context, auth);
-    if (!authResult.ok) {
-      return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
-    }
+  const sharedContext = options.sharedContext;
+  let context: BrowserContext;
+  let ownedClose: (() => Promise<void>) | null = null;
+  let ownedPage: Page | null = null;
+
+  if (sharedContext) {
+    context = sharedContext;
+    // Reuse an existing about:blank tab if there is one (so we don't leave the
+    // browser's initial blank tab orphaned next to the new platform tab).
+    const blank = context.pages().find((p) => {
+      const u = p.url();
+      return u === 'about:blank' || u === '';
+    });
+    ownedPage = blank ?? (await context.newPage());
+  } else {
+    const launched = await launchBrowser(mergedLaunchOptions);
+    context = launched.context;
+    ownedClose = launched.close;
   }
 
-  // 5. Verify login
-  const page = context.pages()[0] ?? (await context.newPage());
-  const loggedIn = await isLoggedIn(page);
-  if (!loggedIn) {
-    return { ok: false, error: 'not-logged-in' };
-  }
-
-  // 6. Upload
   try {
-    await completeUploadForm(page, input);
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    const debugArtifacts = await captureFailureArtifacts('tiktok', page).catch(() => undefined);
+    // 4. Apply auth if provided
+    if (auth !== undefined) {
+      const authResult = await applyTikTokAuth(context, auth);
+      if (!authResult.ok) {
+        return { ok: false, error: `auth:${authResult.reason ?? 'unknown'}` };
+      }
+    }
+
+    // 5. Verify login
+    const page = ownedPage ?? context.pages()[0] ?? (await context.newPage());
+    const loggedIn = await isLoggedIn(page);
+    if (!loggedIn) {
+      return { ok: false, error: 'not-logged-in' };
+    }
+
+    // 6. Upload
+    try {
+      await completeUploadForm(page, input);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const debugArtifacts = await captureFailureArtifacts('tiktok', page).catch(() => undefined);
+      await recordAction('tiktok', accountId, 'post', {
+        ok: false,
+        meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
+      });
+      return {
+        ok: false,
+        error: msg,
+        ...(debugArtifacts !== undefined && { debugArtifacts }),
+      };
+    }
+
+    // 7. Mark persistent session as validated
+    await markUserDataDirValidated('tiktok', accountId);
+
+    // 8. Record success
     await recordAction('tiktok', accountId, 'post', {
-      ok: false,
+      ok: true,
       meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
     });
-    return {
-      ok: false,
-      error: msg,
-      ...(debugArtifacts !== undefined && { debugArtifacts }),
-    };
+
+    return { ok: true };
+  } finally {
+    if (ownedClose) {
+      try {
+        await ownedClose();
+      } catch {}
+    }
+    // When using a shared context, leave the platform's tab open so the user
+    // can inspect it after the campaign. The browser stays alive (per the
+    // current testing setup) and all tabs accumulate.
   }
-
-  // 7. Mark persistent session as validated
-  await markUserDataDirValidated('tiktok', accountId);
-
-  // 8. Record success
-  await recordAction('tiktok', accountId, 'post', {
-    ok: true,
-    meta: { hasMedia: true, hasSchedule: input.schedule !== undefined },
-  });
-
-  return { ok: true };
 }
