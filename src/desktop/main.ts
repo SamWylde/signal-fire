@@ -7,6 +7,23 @@ import { BrowserWindow, Menu, app, screen, shell } from 'electron';
 
 import { type UiServerHandle, startUiServer } from '../ui/server.js';
 
+const SPLASH_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#eef2f4;display:flex;align-items:center;justify-content:center;
+       height:100vh;font-family:system-ui,sans-serif;flex-direction:column;gap:24px}
+  .wordmark{font-size:28px;font-weight:700;color:#1a1a1a;letter-spacing:-0.5px}
+  .wordmark span{color:#e25c2a}
+  .spinner{width:32px;height:32px;border:3px solid #d0d7da;
+           border-top-color:#e25c2a;border-radius:50%;
+           animation:spin 0.8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+</style></head>
+<body><div class="wordmark">Signal <span>Fire</span></div>
+<div class="spinner"></div></body></html>`;
+
+const SPLASH_DATA_URL = `data:text/html;charset=utf-8,${encodeURIComponent(SPLASH_HTML)}`;
+
 interface WindowState {
   width: number;
   height: number;
@@ -129,7 +146,11 @@ function getIconPath(): string {
 function focusMainWindow(): void {
   if (mainWindow === null) {
     if (uiServer !== null) {
-      mainWindow = createWindow(uiServer.url);
+      const w = createWindow();
+      void w.loadURL(uiServer.url).catch((err) => {
+        console.error('[signal-fire] loadURL failed:', err);
+      });
+      mainWindow = w;
     } else {
       pendingFocus = true;
     }
@@ -138,13 +159,6 @@ function focusMainWindow(): void {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
-}
-
-function showWindow(window: BrowserWindow): void {
-  if (window.isDestroyed()) return;
-  if (window.isMinimized()) window.restore();
-  if (!window.isVisible()) window.show();
-  window.focus();
 }
 
 function isInternalUrl(rawUrl: string): boolean {
@@ -163,7 +177,7 @@ async function closeUiServer(): Promise<void> {
   if (handle !== null) await handle.close();
 }
 
-function createWindow(url: string): BrowserWindow {
+function createWindow(): BrowserWindow {
   const state = loadWindowState();
   const window = new BrowserWindow({
     width: state?.width ?? DEFAULT_WIDTH,
@@ -187,6 +201,14 @@ function createWindow(url: string): BrowserWindow {
   if (state?.isMaximized) window.maximize();
   if (state?.isFullScreen) window.setFullScreen(true);
 
+  window.once('ready-to-show', () => {
+    if (!window.isDestroyed()) window.show();
+  });
+  const showFallback = setTimeout(() => {
+    if (!window.isDestroyed() && !window.isVisible()) window.show();
+  }, 1500);
+  window.once('ready-to-show', () => clearTimeout(showFallback));
+
   window.on('resize', () => saveWindowState(window));
   window.on('move', () => saveWindowState(window));
   window.on('maximize', () => saveWindowState(window));
@@ -194,15 +216,6 @@ function createWindow(url: string): BrowserWindow {
   window.on('enter-full-screen', () => saveWindowState(window));
   window.on('leave-full-screen', () => saveWindowState(window));
   window.on('close', () => saveWindowStateSync(window));
-
-  window.once('ready-to-show', () => showWindow(window));
-
-  window.webContents.once('did-finish-load', () => showWindow(window));
-  window.webContents.once('did-fail-load', () => showWindow(window));
-
-  const showFallback = setTimeout(() => showWindow(window), 2500);
-  showFallback.unref();
-  window.once('closed', () => clearTimeout(showFallback));
 
   window.webContents.setWindowOpenHandler(({ url: targetUrl }) => {
     if (isInternalUrl(targetUrl)) return { action: 'allow' };
@@ -220,7 +233,9 @@ function createWindow(url: string): BrowserWindow {
     if (mainWindow === window) mainWindow = null;
   });
 
-  void window.loadURL(url);
+  void window.loadURL(SPLASH_DATA_URL).catch(() => {
+    /* aborted when real URL loads */
+  });
   return window;
 }
 
@@ -228,8 +243,16 @@ async function startDesktop(): Promise<void> {
   Menu.setApplicationMenu(null);
   app.setAppUserModelId('com.signal-fire.desktop');
   app.setName('Signal Fire');
+
+  mainWindow = createWindow();
   uiServer = await startUiServer({ host: '127.0.0.1', port: 4317 });
-  mainWindow = createWindow(uiServer.url);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+  void mainWindow.loadURL(uiServer.url).catch((err) => {
+    console.error('[signal-fire] Failed to load UI server URL:', err);
+  });
+
   if (pendingFocus) {
     pendingFocus = false;
     focusMainWindow();
@@ -253,7 +276,11 @@ if (!hasSingleInstanceLock) {
 
 app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0 && uiServer !== null) {
-    mainWindow = createWindow(uiServer.url);
+    const w = createWindow();
+    void w.loadURL(uiServer.url).catch((err) => {
+      console.error('[signal-fire] loadURL failed:', err);
+    });
+    mainWindow = w;
   }
 });
 
