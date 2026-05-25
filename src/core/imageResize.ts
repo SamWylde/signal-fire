@@ -1,7 +1,16 @@
-import sharp from 'sharp';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import type sharp from 'sharp';
 import type { PostingPlatform } from './types.js';
+
+type SharpConstructor = typeof sharp;
+let _sharp: SharpConstructor | undefined;
+async function getSharp(): Promise<SharpConstructor> {
+  if (_sharp === undefined) {
+    _sharp = (await import('sharp')).default as unknown as SharpConstructor;
+  }
+  return _sharp;
+}
 
 export type PlatformImageSpec = {
   maxWidth: number;
@@ -59,6 +68,7 @@ async function resizeOne(
   platform: string,
   spec: PlatformImageSpec,
 ): Promise<ResizedVariant> {
+  const sharp = await getSharp();
   // Load + rotate (apply EXIF orientation) so we work on the visually-correct image.
   const inputPipeline = () => sharp(inputPath).rotate();
 

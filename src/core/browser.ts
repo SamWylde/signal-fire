@@ -3,7 +3,15 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import type { BrowserContext, Locator, Page } from 'patchright';
-import { chromium } from 'patchright';
+
+type PatchrightModule = typeof import('patchright');
+let _chromium: PatchrightModule['chromium'] | undefined;
+async function getChromium(): Promise<PatchrightModule['chromium']> {
+  if (_chromium === undefined) {
+    _chromium = (await import('patchright')).chromium;
+  }
+  return _chromium;
+}
 
 export type { BrowserContext, Page, Locator };
 
@@ -286,6 +294,7 @@ export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowse
   await migrateProfileDirIfNeeded(opts.platform, opts.accountId);
   const paths = getSessionPaths(opts.platform, opts.accountId);
 
+  const chromium = await getChromium();
   const context = await chromium.launchPersistentContext(paths.userDataDir, {
     headless: false,
     channel: browserChannel,
