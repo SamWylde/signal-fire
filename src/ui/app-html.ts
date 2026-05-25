@@ -406,6 +406,15 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     .file-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; }
     .file-clear { position: relative; z-index: 1; margin-left: auto; flex-shrink: 0; padding: 0 5px; height: 20px; border: none; background: none; color: var(--ink-3); cursor: pointer; font-size: 14px; line-height: 1; border-radius: 4px; }
     .file-clear:hover { background: var(--surface); color: var(--ink-1); }
+    .file-url { position: relative; z-index: 1; flex-shrink: 0; padding: 0 8px; height: 22px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); cursor: pointer; font-size: 11px; line-height: 1; border-radius: 4px; }
+    .file-url:hover { background: var(--surface-alt); color: var(--ink-1); }
+    .url-dialog { border: 1px solid var(--line-strong); border-radius: 10px; padding: 0; background: var(--paper); color: var(--ink); box-shadow: 0 12px 32px var(--shadow); min-width: 360px; max-width: 90vw; }
+    .url-dialog::backdrop { background: rgba(0,0,0,0.35); }
+    .url-dialog-form { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+    .url-dialog-title { font-weight: 650; font-size: 13px; color: var(--ink); }
+    .url-dialog-input { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-hi); color: var(--ink); font-size: 13px; font-family: var(--sans); box-sizing: border-box; }
+    .url-dialog-input:focus { outline: 2px solid var(--ember); outline-offset: -1px; }
+    .url-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .preview-stack {
       flex: 1;
       min-height: 0;
@@ -1866,6 +1875,83 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       saveStateSoon();
     }
 
+    function promptForUrl(message) {
+      return new Promise(function(resolve) {
+        var dlg = document.getElementById('urlPromptDialog');
+        var input = document.getElementById('urlPromptInput');
+        var cancelBtn = document.getElementById('urlPromptCancel');
+        var labelEl = document.getElementById('urlPromptLabel');
+        if (!dlg || !input || !cancelBtn) {
+          resolve(null);
+          return;
+        }
+        if (labelEl && message) labelEl.textContent = message;
+        input.value = '';
+        var settled = false;
+        function finish(value) {
+          if (settled) return;
+          settled = true;
+          dlg.removeEventListener('close', onClose);
+          cancelBtn.removeEventListener('click', onCancel);
+          try { dlg.close(); } catch (e) {}
+          resolve(value);
+        }
+        function onClose() {
+          var v = (input.value || '').trim();
+          finish(v ? v : null);
+        }
+        function onCancel(e) {
+          e.preventDefault();
+          finish(null);
+        }
+        dlg.addEventListener('close', onClose);
+        cancelBtn.addEventListener('click', onCancel);
+        try {
+          dlg.showModal();
+        } catch (e) {
+          finish(null);
+          return;
+        }
+        setTimeout(function() { input.focus(); }, 0);
+      });
+    }
+
+    async function attachImageFromUrl(input) {
+      var rawUrl = await promptForUrl('Image URL');
+      if (!rawUrl) return;
+      setBottom('Fetching image from URL…');
+      var requestId = Date.now() + ':' + Math.random();
+      draftUploadRequests[input.name] = requestId;
+      var form = new FormData();
+      form.set('kind', input.name);
+      form.set('url', rawUrl);
+      var data;
+      try {
+        data = await api('/api/draft-file-from-url', { method: 'POST', body: form });
+      } catch (err) {
+        setBottom('Could not fetch image: ' + err.message, 'bad');
+        return;
+      }
+      if (draftUploadRequests[input.name] !== requestId) return;
+      draftFiles[input.name] = data.file;
+      // If base image, clear any platform-specific overrides so the new base + variants apply (same behavior as the file-picker change handler)
+      if (input.name === 'image') {
+        var platforms = ['linkedin', 'x', 'facebook', 'instagram', 'tiktok', 'youtube'];
+        for (var i = 0; i < platforms.length; i++) {
+          var key = platforms[i] + 'Image';
+          if (draftFiles[key]) {
+            await clearDraftFile(key);
+          }
+        }
+      }
+      updateFileLabel(input);
+      document.querySelectorAll('[data-file-label]').forEach(function(other) {
+        if (other !== input) updateFileLabel(other);
+      });
+      saveStateSoon();
+      setBottom('Image attached from URL', 'ok');
+    }
+
     async function clearDraftFile(inputName) {
       var draft = draftFiles[inputName];
       if (!draft) return;
@@ -2903,6 +2989,21 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           clearDraftFile(input.name).catch(function() {});
         });
         fieldLabel.appendChild(clearBtn);
+        if (input.accept && input.accept.indexOf('image') !== -1) {
+          var urlBtn = document.createElement('button');
+          urlBtn.type = 'button';
+          urlBtn.className = 'file-url';
+          urlBtn.title = 'Attach image from URL';
+          urlBtn.textContent = 'URL';
+          urlBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            attachImageFromUrl(input).catch(function(err) {
+              setBottom('Could not fetch image: ' + err.message, 'bad');
+            });
+          });
+          fieldLabel.appendChild(urlBtn);
+        }
       }
     });
 
@@ -2973,5 +3074,15 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         reportSettledFailures(results, 'Startup refresh had errors');
       });
   </script>
+  <dialog id="urlPromptDialog" class="url-dialog">
+    <form method="dialog" class="url-dialog-form">
+      <div class="url-dialog-title" id="urlPromptLabel">Image URL</div>
+      <input type="url" id="urlPromptInput" class="url-dialog-input" placeholder="https://example.com/image.png" autocomplete="off" spellcheck="false">
+      <div class="url-dialog-actions">
+        <button type="button" class="btn ghost" id="urlPromptCancel">Cancel</button>
+        <button type="submit" class="btn primary" id="urlPromptOk">OK</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>`;

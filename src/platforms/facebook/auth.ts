@@ -45,7 +45,7 @@ export async function applyFacebookAuth(
   if (preparsed !== undefined || cookiesFile !== undefined) {
     const cookies = preparsed !== undefined ? preparsed : await loadCookies(cookiesFile as string);
 
-    const warmupPage = context.pages()[0] ?? (await context.newPage());
+    const warmupPage = await context.newPage();
     await warmupPage.goto(FACEBOOK.urls.home, { waitUntil: 'domcontentloaded' });
     await warmupPage.close();
 

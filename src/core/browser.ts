@@ -61,6 +61,7 @@ const BASE_LAUNCH_ARGS = [
   // Patchright already injects --no-first-run and --no-default-browser-check via its own
   // chromiumSwitches. Keep only flags that patchright does not supply.
   '--mute-audio', // Genuine UX need: prevents audio from sites popping up during automation.
+  '--start-minimized', // Launch minimized so the browser doesn't steal focus from the user.
 ] as const;
 
 type BrowserChannel =
@@ -270,13 +271,17 @@ export async function isLocatorVisible(locator: Locator, timeoutMs: number): Pro
   }
 }
 
-export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowser> {
-  const quarantine = await isAccountQuarantined(opts.platform, opts.accountId);
+export async function assertNotQuarantined(platform: Platform, accountId: string): Promise<void> {
+  const quarantine = await isAccountQuarantined(platform, accountId);
   if (quarantine.quarantined) {
     const until =
       quarantine.untilMs !== undefined ? new Date(quarantine.untilMs).toISOString() : 'unknown';
-    throw new Error(`${opts.platform}/${opts.accountId} is quarantined until ${until}`);
+    throw new Error(`${platform}/${accountId} is quarantined until ${until}`);
   }
+}
+
+export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowser> {
+  await assertNotQuarantined(opts.platform, opts.accountId);
 
   warnIgnoredLaunchOptions(opts);
   const browserChannel = resolveBrowserChannel(opts.browserChannel);

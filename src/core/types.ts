@@ -31,7 +31,7 @@ export interface PostInput {
 
 export interface PostResult {
   ok: boolean;
-  status?: 'posted' | 'failed' | 'unsure';
+  status?: 'posted' | 'failed' | 'unsure' | 'prepared';
   url?: string;
   error?: string;
   detail?: string;
