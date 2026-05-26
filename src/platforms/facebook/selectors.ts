@@ -74,10 +74,11 @@ export const FACEBOOK = {
       // Stage 2: post settings dialog (after clicking Next)
       settingsDialog: '[aria-label="Post settings"][role="dialog"]',
       settingsBackButton: '[aria-label="Back"][role="button"]',
-      // Verified 2026-05-20 from user-provided HTML dump of the Stage 2 Post settings dialog.
-      // Scoped to the settings dialog to avoid matching the Stage 1 "Post" word in other UI elements.
-      postSubmitButton:
-        '[aria-label="Post settings"][role="dialog"] [aria-label="Post"][role="button"]',
+      // Scoped only by aria-label="Post" + role="button" — the in-page JS filter in
+      // clickFacebookSettingsPostButton picks the bottommost visible match, which is the
+      // submit button in whichever dialog is currently open. The previous dialog-scoped
+      // selector broke when Facebook changed the Stage 2 dialog's aria-label.
+      postSubmitButton: '[aria-label="Post"][role="button"]',
 
       // File input for image/video upload — already present in the DOM inside the modal,
       // sibling to the "Photo/video" button. setInputFiles on this directly to avoid opening
