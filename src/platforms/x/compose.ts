@@ -666,14 +666,22 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
   }
 
   // --- Step 7: Wait for submission confirmation ---
+  // After /compose/post closes, X briefly renders an inline home-feed composer
+  // with the same data-testid. .first() avoids strict-mode rejection during
+  // that transition. Each signal swallows its own rejection into a never-
+  // settling promise so a single failure doesn't poison the race — the
+  // setTimeout backstop still bounds the total wait.
   const composerGone = page
     .locator(textAreaSelector)
+    .first()
     .waitFor({ state: 'hidden', timeout: X.timeouts.longMs })
-    .then(() => 'gone' as const);
+    .then(() => 'gone' as const)
+    .catch(() => new Promise<'gone'>(() => undefined));
 
   const navigatedAway = page
     .waitForURL((url) => !url.href.includes('/compose'), { timeout: X.timeouts.longMs })
-    .then(() => 'navigated' as const);
+    .then(() => 'navigated' as const)
+    .catch(() => new Promise<'navigated'>(() => undefined));
 
   const confirmed = await Promise.race([
     composerGone,
