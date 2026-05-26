@@ -184,7 +184,16 @@ async function clickFacebookSettingsPostButton(
     .then((handle) => handle.jsonValue() as Promise<number>);
 
   const postButton = page.locator(selector).nth(postButtonPosition - 1);
-  await humanClick(page, postButton);
+  // Facebook's React click handler is attached to the inner overlay
+  // (data-visualcompletion="ignore"), not the semantic role="button" wrapper.
+  // Clicking the wrapper lands on the overlay coordinates but doesn't always
+  // register as a button activation. Target the overlay directly when present.
+  const overlay = postButton.locator('[data-visualcompletion="ignore"]').first();
+  const overlayExists = await overlay
+    .count()
+    .then((n) => n > 0)
+    .catch(() => false);
+  await humanClick(page, overlayExists ? overlay : postButton);
   logFacebook(input, 'Facebook settings Post button clicked');
 }
 
