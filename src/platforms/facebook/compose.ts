@@ -146,6 +146,37 @@ async function switchIntoPageIfPromptVisible(
   return true;
 }
 
+async function dismissCallNowPromoIfVisible(
+  page: Page,
+  input: FacebookComposeInput,
+): Promise<void> {
+  // Facebook sometimes pops a "Speak With People Directly" promo after clicking Post,
+  // asking to add a Call Now button. It overlays the settings dialog and blocks the
+  // submission flow until dismissed. Short wait — the popup either appears within ~2s
+  // or doesn't appear at all.
+  const promo = page
+    .locator('[aria-label="Speak With People Directly"][role="dialog"]')
+    .first();
+  const visible = await promo
+    .waitFor({ state: 'visible', timeout: 2000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!visible) return;
+
+  const notNow = promo
+    .locator(
+      '[aria-label="Not now"][role="button"]:not([aria-disabled="true"]):not([aria-hidden="true"])',
+    )
+    .first();
+  const overlay = notNow.locator('[data-visualcompletion="ignore"]').first();
+  const overlayExists = await overlay
+    .count()
+    .then((n) => n > 0)
+    .catch(() => false);
+  await humanClick(page, overlayExists ? overlay : notNow);
+  logFacebook(input, 'Dismissed "Speak With People Directly" promo via Not now');
+}
+
 async function clickFacebookSettingsPostButton(
   page: Page,
   input: FacebookComposeInput,
@@ -195,6 +226,7 @@ async function clickFacebookSettingsPostButton(
     .catch(() => false);
   await humanClick(page, overlayExists ? overlay : postButton);
   logFacebook(input, 'Facebook settings Post button clicked');
+  await dismissCallNowPromoIfVisible(page, input);
 }
 
 async function waitForFacebookComposerHidden(page: Page, timeoutMs: number): Promise<boolean> {
