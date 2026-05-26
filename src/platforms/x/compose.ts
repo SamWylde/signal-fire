@@ -91,6 +91,35 @@ async function clickSafely(page: Page, locator: Locator): Promise<boolean> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Hydration helpers
+// ---------------------------------------------------------------------------
+
+class XHomeHydrationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'XHomeHydrationError';
+  }
+}
+
+async function waitForXHomeHydrated(page: Page): Promise<void> {
+  try {
+    await page.goto(X.urls.home, { waitUntil: 'domcontentloaded' });
+    await page
+      .locator(xp(X.selectors.loginIndicators.primaryColumn))
+      .first()
+      .waitFor({ state: 'visible', timeout: 10_000 });
+    await jitterSleep(800, 0.3);
+  } catch (err) {
+    if (err instanceof XHomeHydrationError) throw err;
+    throw new XHomeHydrationError(
+      `X /home failed to hydrate: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 async function scrollAudienceContainer(container: Locator): Promise<void> {
   await container
     .evaluate((node) => {
@@ -224,8 +253,14 @@ async function openStandaloneComposer(page: Page): Promise<{
   postButtonSelector: string;
   textAreaLocator: Locator;
 }> {
+  await waitForXHomeHydrated(page);
   await page.goto(X.urls.composePost, { waitUntil: 'domcontentloaded' });
   await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => undefined);
+  await page
+    .locator(xp(X.selectors.loginIndicators.primaryColumn))
+    .first()
+    .waitFor({ state: 'visible', timeout: X.timeouts.shortMs })
+    .catch(() => undefined);
   await jitterSleep(1200, 0.5);
 
   const textAreaLocator = await resolveXTextEditor(page, X.timeouts.mediumMs);
@@ -260,14 +295,22 @@ async function typeAndVerifyXText(
   page: Page,
   locator: Locator,
   text: string,
-  typingSpeedMultiplier?: number,
-  wordPauseMaxMs?: number,
+  options: {
+    typingSpeedMultiplier?: number;
+    wordPauseMaxMs?: number;
+    clearFirst?: boolean;
+    allowDestructiveFallback?: boolean;
+  } = {},
 ): Promise<void> {
+  const clearFirst = options.clearFirst ?? true;
+  const allowDestructiveFallback = options.allowDestructiveFallback ?? true;
   await humanType(locator, text, {
-    clearFirst: true,
+    clearFirst,
     naturalCadence: true,
-    ...(typingSpeedMultiplier !== undefined && { typingSpeedMultiplier }),
-    ...(wordPauseMaxMs !== undefined && { wordPauseMaxMs }),
+    ...(options.typingSpeedMultiplier !== undefined && {
+      typingSpeedMultiplier: options.typingSpeedMultiplier,
+    }),
+    ...(options.wordPauseMaxMs !== undefined && { wordPauseMaxMs: options.wordPauseMaxMs }),
   });
   await jitterSleep(700, 0.4);
 
@@ -275,6 +318,12 @@ async function typeAndVerifyXText(
   if (expected.length === 0) return;
   const typedText = await textEditorValue(locator);
   if (typedText.includes(expected)) return;
+
+  if (!allowDestructiveFallback) {
+    throw new Error(
+      'Could not verify X composer text and destructive fallback is disabled because media is attached',
+    );
+  }
 
   await locator.focus().catch(async () => {
     await humanClick(page, locator);
@@ -319,6 +368,32 @@ async function detectPostedTweetUrl(page: Page, text: string): Promise<string | 
   return undefined;
 }
 
+/** Exported for unit tests. Polls until the Post button is stably visible and enabled. */
+export async function waitForStableXPostButtonEnabled(
+  page: Page,
+  postButtonSelector: string,
+  timeoutMs: number,
+): Promise<void> {
+  const locator = page.locator(postButtonSelector).first();
+  await locator.waitFor({ state: 'visible', timeout: timeoutMs });
+
+  const deadline = Date.now() + timeoutMs;
+  let consecutiveEnabled = 0;
+  while (Date.now() < deadline) {
+    const visible = await locator.isVisible().catch(() => false);
+    const ariaDisabled = await locator.getAttribute('aria-disabled').catch(() => 'true');
+    const isDisabled = await locator.isDisabled().catch(() => true);
+    if (visible && ariaDisabled !== 'true' && !isDisabled) {
+      consecutiveEnabled += 1;
+      if (consecutiveEnabled >= 2) return;
+    } else {
+      consecutiveEnabled = 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`X Post button did not stabilize as enabled within ${timeoutMs}ms`);
+}
+
 // ---------------------------------------------------------------------------
 // postTweet — main public function
 // ---------------------------------------------------------------------------
@@ -331,6 +406,11 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
       ? filterMediaForX(input.mediaPaths)
       : [];
 
+  const hasText = text.trim().length > 0;
+  if (!hasText && mediaPaths.length === 0) {
+    throw new Error('postTweet requires either text or media');
+  }
+
   let composer: XOpenedComposer;
 
   // --- Step 1: Navigate and open composer ---
@@ -342,6 +422,9 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
     try {
       composer = await openStandaloneComposer(page);
     } catch (err) {
+      if (err instanceof XHomeHydrationError) {
+        throw err; // do NOT fall back to sidebar — sidebar also depends on /home hydration
+      }
       logX(
         input,
         'X standalone composer failed; falling back to sidebar',
@@ -362,37 +445,37 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
   textAreaLocator = await resolveXTextEditor(page, X.timeouts.shortMs).catch(
     () => composer.textAreaLocator,
   );
-  logX(input, 'Typing X post text');
-  await typeAndVerifyXText(
-    page,
-    textAreaLocator,
-    text,
-    input.typingSpeedMultiplier,
-    input.wordPauseMaxMs,
-  );
-  logX(input, 'X post text verified');
-  await jitterSleep(1200, 0.4);
 
-  // --- Step 3: Attach media (if any) ---
+  // --- Step 3: Attach media first (if any), then type text ---
   if (mediaPaths.length > 0) {
+    // Pre-clear while editor is empty of media (safe — no attachment yet)
+    await humanType(textAreaLocator, '', { clearFirst: true });
+
     const fileInputLocator = page.locator(X.selectors.composer.fileInput).first();
     await fileInputLocator.setInputFiles(mediaPaths);
 
-    // Wait for post button to become enabled (upload settled)
-    const postBtnLocator = page.locator(postButtonSelector).first();
-    await postBtnLocator.waitFor({ state: 'visible', timeout: X.timeouts.postReadyMs });
-    await postBtnLocator
-      .waitFor({ state: 'visible', timeout: X.timeouts.postReadyMs })
-      .catch(() => undefined);
-    // Poll until aria-disabled is removed
-    for (let i = 0; i < 60; i++) {
-      const disabled = await postBtnLocator.getAttribute('aria-disabled').catch(() => 'true');
-      const isDisabled = await postBtnLocator.isDisabled().catch(() => true);
-      if (disabled !== 'true' && !isDisabled) break;
-      await jitterSleep(500, 0.1);
-    }
+    await waitForStableXPostButtonEnabled(page, postButtonSelector, X.timeouts.postReadyMs);
+    logX(input, 'X media attached and post button stable');
 
+    // Re-acquire editor — ProseMirror may have remounted after attachment
+    textAreaLocator = await resolveXTextEditor(page, X.timeouts.shortMs).catch(
+      () => textAreaLocator,
+    );
     await jitterSleep(800, 0.5);
+  }
+
+  if (hasText) {
+    logX(input, 'Typing X post text');
+    await typeAndVerifyXText(page, textAreaLocator, text, {
+      ...(input.typingSpeedMultiplier !== undefined && {
+        typingSpeedMultiplier: input.typingSpeedMultiplier,
+      }),
+      ...(input.wordPauseMaxMs !== undefined && { wordPauseMaxMs: input.wordPauseMaxMs }),
+      clearFirst: mediaPaths.length === 0,
+      allowDestructiveFallback: mediaPaths.length === 0,
+    });
+    logX(input, 'X post text verified');
+    await jitterSleep(1200, 0.4);
   }
 
   // --- Step 4: Wait for overlay to disappear (best-effort, 3s timeout) ---
@@ -402,14 +485,19 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
     // Mask never appeared or already gone — fine
   }
 
-  // --- Step 5: Dry-run check ---
+  // --- Step 5: Wait for post button to be stably enabled ---
+  await waitForStableXPostButtonEnabled(page, postButtonSelector, X.timeouts.shortMs);
+  logX(input, 'X post button stable; clicking submit');
+
+  // --- Step 6: Dry-run check ---
   if (input.dryRun === true) {
     logX(input, 'X post ready for manual submit');
     console.log('[x] dry-run: would click "Post" to submit');
     return {};
   }
 
-  // --- Step 6: Three-tier post click fallback ---
+  // --- Step 7: Three-tier post click fallback ---
+
   let postClickError: unknown;
   try {
     await humanClick(page, page.locator(postButtonSelector).first());

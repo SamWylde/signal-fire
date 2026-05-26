@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterMediaForX } from '../src/platforms/x/compose.js';
+import { filterMediaForX, waitForStableXPostButtonEnabled } from '../src/platforms/x/compose.js';
 import { X } from '../src/platforms/x/selectors.js';
 
 describe('filterMediaForX', () => {
@@ -54,5 +54,87 @@ describe('X community selectors', () => {
   it('carries the audience picker selectors from the source composer flow', () => {
     expect(X.selectors.audience.chooseAudienceButton).toContain('Choose audience');
     expect(X.selectors.audience.container).toContain('HoverCard');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// waitForStableXPostButtonEnabled tests
+// ---------------------------------------------------------------------------
+
+function makeLocator(opts: {
+  waitForThrows?: boolean;
+  visible: boolean[] | boolean;
+  isDisabled: boolean[] | boolean;
+  ariaDisabled: string[] | string;
+}) {
+  let step = 0;
+  const seqOr = <T>(seq: T[] | T): T =>
+    Array.isArray(seq) ? (seq[Math.min(step, seq.length - 1)] as T) : seq;
+  const locator = {
+    waitFor: async (_opts?: unknown) => {
+      if (opts.waitForThrows) throw new Error('not visible');
+    },
+    isVisible: async () => seqOr(opts.visible),
+    isDisabled: async () => seqOr(opts.isDisabled),
+    getAttribute: async (_attr: string) => seqOr(opts.ariaDisabled),
+  };
+  const page = { locator: () => ({ first: () => locator }) };
+  // Bump step on every isVisible call (called once per poll iteration).
+  const origIsVisible = locator.isVisible;
+  locator.isVisible = async () => {
+    const val = await origIsVisible();
+    step += 1;
+    return val;
+  };
+  return { page, locator };
+}
+
+describe('waitForStableXPostButtonEnabled', () => {
+  it('throws when the post button never becomes visible', async () => {
+    const { page } = makeLocator({
+      waitForThrows: true,
+      visible: false,
+      isDisabled: true,
+      ariaDisabled: 'true',
+    });
+    await expect(
+      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 50),
+    ).rejects.toThrow('not visible');
+  });
+
+  it('throws when the button is visible but never enables within the timeout', async () => {
+    const { page } = makeLocator({
+      visible: true,
+      isDisabled: true,
+      ariaDisabled: 'true',
+    });
+    await expect(
+      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 50),
+    ).rejects.toThrow('did not stabilize');
+  });
+
+  it('resolves when the button is stably visible and enabled for two consecutive samples', async () => {
+    const { page } = makeLocator({
+      visible: true,
+      isDisabled: false,
+      ariaDisabled: 'false',
+    });
+    await expect(
+      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 1000),
+    ).resolves.toBeUndefined();
+  });
+
+  it('resets the counter when state flickers', async () => {
+    // visible sequence: [true, false, true, true, true, ...]
+    // step 0 → true (consecutiveEnabled=1), step 1 → false (reset to 0),
+    // step 2 → true (consecutiveEnabled=1), step 3 → true (consecutiveEnabled=2 → resolves)
+    const { page } = makeLocator({
+      visible: [true, false, true, true, true],
+      isDisabled: false,
+      ariaDisabled: 'false',
+    });
+    await expect(
+      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 2000),
+    ).resolves.toBeUndefined();
   });
 });
