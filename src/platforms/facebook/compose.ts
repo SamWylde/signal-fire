@@ -157,7 +157,6 @@ async function clickFacebookSettingsPostButton(
         const buttons = Array.from(document.querySelectorAll(buttonSelector)) as HTMLElement[];
         const candidates = buttons
           .map((button, index) => {
-            const text = (button.textContent ?? '').replace(/\s+/g, ' ').trim();
             const style = window.getComputedStyle(button);
             const rect = button.getBoundingClientRect();
             return {
@@ -166,7 +165,6 @@ async function clickFacebookSettingsPostButton(
               bottom: rect.y + rect.height,
               visible:
                 button.getAttribute('aria-label') === 'Post' &&
-                text === 'Post' &&
                 button.getAttribute('aria-disabled') !== 'true' &&
                 style.visibility !== 'hidden' &&
                 style.display !== 'none' &&
