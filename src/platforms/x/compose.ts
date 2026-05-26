@@ -496,18 +496,92 @@ export async function postTweet(page: Page, input: XComposeInput): Promise<XComp
     return {};
   }
 
-  // --- Step 7: Three-tier post click fallback ---
+  // --- Step 7: Click Post with conditional Escape-dismiss + 3-tier fallback ---
+  // Tier 1: Trial-click probe → press Escape ONLY if intercepted → safely dismiss any
+  //   "Save post?" dialog that appears (Escape, not Discard) → native click (actionability check).
+  // Tier 2: humanClick with raw mouse coords (bypasses Playwright actionability check;
+  //   helps on transient races, but browser hit-testing still routes the click to whatever
+  //   element is on top — does NOT force past real overlay coverage).
+  // Tier 3: keyboard Ctrl+Enter (fully bypasses pointer hit-testing).
+
+  const postLocator = page.locator(postButtonSelector).first();
+  const saveDialogLocator = page.locator('[data-testid="confirmationSheetDialog"]').first();
+
+  // Helper closures keep the flow linear and readable.
+  const probeClickable = async (): Promise<boolean> => {
+    try {
+      await postLocator.click({ trial: true, timeout: 1500 });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const saveDialogVisible = async (): Promise<boolean> =>
+    saveDialogLocator.isVisible({ timeout: 500 }).catch(() => false);
+
+  // Close the Save-post dialog with Escape — NOT Discard (which discards the post) and NOT
+  // Save (which routes the post to drafts). Then verify the composer textarea is still visible.
+  const dismissSavePostDialog = async (): Promise<void> => {
+    logX(input, 'X Save-post dialog detected; pressing Escape to dismiss (preserving content)');
+    await page.keyboard.press('Escape');
+    await jitterSleep(1000, 0.2);
+    const composerStillVisible = await page
+      .locator(textAreaSelector)
+      .first()
+      .isVisible({ timeout: 1500 })
+      .catch(() => false);
+    if (!composerStillVisible) {
+      throw new Error(
+        'X composer disappeared after Save-post dialog dismiss; cannot recover the post',
+      );
+    }
+  };
+
+  // Step 1: probe BEFORE pressing any Escape. If the button is already clickable, do nothing.
+  let clickable = await probeClickable();
+
+  if (!clickable) {
+    logX(input, 'X Post button intercepted; pressing Escape to dismiss overlay');
+    await page.keyboard.press('Escape');
+    await jitterSleep(2000, 0.2);
+
+    // The Escape may have surfaced X's "Save post?" dialog. If so, dismiss safely.
+    if (await saveDialogVisible()) {
+      await dismissSavePostDialog();
+    }
+
+    clickable = await probeClickable();
+
+    // Stacked-overlay case: one more Escape, then re-check.
+    if (!clickable) {
+      logX(input, 'X Post button still intercepted; pressing Escape again');
+      await page.keyboard.press('Escape');
+      await jitterSleep(2000, 0.2);
+
+      if (await saveDialogVisible()) {
+        await dismissSavePostDialog();
+      }
+    }
+  }
 
   let postClickError: unknown;
   try {
-    await humanClick(page, page.locator(postButtonSelector).first());
+    await postLocator.click({ timeout: X.timeouts.shortMs });
     postClickError = null;
   } catch (err) {
+    logX(
+      input,
+      'X native click failed; falling back to humanClick',
+      err instanceof Error ? err.message : String(err),
+    );
     postClickError = err;
   }
 
   if (postClickError !== null) {
-    // Tier 2: mouse click after scrolling the fallback into view.
+    // Tier 2: humanClick with raw mouse coords after scrolling into view. Bypasses Playwright's
+    // actionability check, but browser hit-testing still routes the click to whatever element is
+    // on top — does NOT force past real overlay coverage.
     try {
       const fallback = page.locator(postButtonSelector).first();
       await fallback.scrollIntoViewIfNeeded({ timeout: X.timeouts.shortMs }).catch(() => undefined);
