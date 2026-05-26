@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { filterMediaForX, waitForStableXPostButtonEnabled } from '../src/platforms/x/compose.js';
+import {
+  filterMediaForX,
+  normalizeXTextForCompare,
+  verifyXTextMatch,
+  waitForStableXPostButtonEnabled,
+} from '../src/platforms/x/compose.js';
 import { X } from '../src/platforms/x/selectors.js';
 
 describe('filterMediaForX', () => {
@@ -136,5 +141,69 @@ describe('waitForStableXPostButtonEnabled', () => {
     await expect(
       waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 2000),
     ).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// verifyXTextMatch tests
+// ---------------------------------------------------------------------------
+
+describe('normalizeXTextForCompare', () => {
+  it('collapses runs of whitespace to single spaces but keeps word boundaries', () => {
+    expect(normalizeXTextForCompare('hello   world')).toBe('hello world');
+    expect(normalizeXTextForCompare('hello\n\nworld')).toBe('hello world');
+  });
+
+  it('strips zero-width chars and NBSP', () => {
+    expect(normalizeXTextForCompare('hi​there')).toBe('hithere');
+    expect(normalizeXTextForCompare('a b')).toBe('a b');
+  });
+
+  it('trims leading and trailing whitespace', () => {
+    expect(normalizeXTextForCompare('  hi  ')).toBe('hi');
+  });
+});
+
+describe('verifyXTextMatch', () => {
+  it('passes when expected text appears verbatim in actual', () => {
+    expect(verifyXTextMatch('hello world', 'hello world')).toBe(true);
+  });
+
+  it('passes when X inserts whitespace inside a URL (hyphen wrap)', () => {
+    const expected = 'Read this: https://example.com/posts/grant-writing-tips';
+    const actual = 'Read this: https://example.com/posts/grant-\nwriting-tips';
+    expect(verifyXTextMatch(expected, actual)).toBe(true);
+  });
+
+  it('passes when X inserts whitespace inside a URL (slash wrap)', () => {
+    const expected = 'See https://example.com/very/long/path/here for details';
+    const actual = 'See https://example.com/very/long/\npath/here for details';
+    expect(verifyXTextMatch(expected, actual)).toBe(true);
+  });
+
+  it('passes when paragraph breaks are normalized to spaces', () => {
+    const expected = 'line one\n\nline two';
+    const actual = 'line one line two';
+    expect(verifyXTextMatch(expected, actual)).toBe(true);
+  });
+
+  it('fails when actual text loses spaces between regular words', () => {
+    expect(verifyXTextMatch('grant writing tips', 'grantwriting tips')).toBe(false);
+  });
+
+  it('fails when a meaningful non-URL segment is missing', () => {
+    const expected = 'Check out https://example.com/x for details';
+    const actual = 'Check out https://example.com/x';
+    expect(verifyXTextMatch(expected, actual)).toBe(false);
+  });
+
+  it('passes when all prose segments and URLs are present even with extra text in the editor', () => {
+    const expected = 'New post about https://example.com/foo today';
+    const actual = '[draft] New post about https://example.com/foo today — saved 3m ago';
+    expect(verifyXTextMatch(expected, actual)).toBe(true);
+  });
+
+  it('passes for empty expected text', () => {
+    expect(verifyXTextMatch('', 'anything')).toBe(true);
   });
 });
