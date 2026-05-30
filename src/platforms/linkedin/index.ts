@@ -7,9 +7,12 @@ import {
 } from '../../core/browser.js';
 import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
+import { createLogger } from '../../core/logging.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
 import type { AccountId, PostResult } from '../../core/types.js';
+
+const log = createLogger('linkedin');
 import { type LinkedInAuthInput, applyLinkedInAuth, isLoggedIn } from './auth.js';
 import { type LinkedInComposeInput, createPost } from './compose.js';
 
@@ -120,7 +123,7 @@ export async function post(
       try {
         await markUserDataDirValidated('linkedin', accountId);
       } catch (err) {
-        console.error('Failed to mark session validated:', err);
+        log.error('Failed to mark session validated:', err);
       }
       keepOpen = true;
       return {

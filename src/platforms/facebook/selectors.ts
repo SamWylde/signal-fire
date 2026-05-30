@@ -1,3 +1,5 @@
+import { DEFAULT_TIMEOUTS } from '../../core/timeouts.js';
+
 export const FACEBOOK = {
   urls: {
     home: 'https://www.facebook.com/',
@@ -5,9 +7,7 @@ export const FACEBOOK = {
     // Note: caller passes the target Page URL (e.g. https://www.facebook.com/<page-id>) per-post.
   },
   timeouts: {
-    shortMs: 5_000,
-    mediumMs: 10_000,
-    longMs: 30_000,
+    ...DEFAULT_TIMEOUTS,
     typingDelayMs: 50, // facebook-automation uses keyboard.press with delay; we use humanType
   },
   selectors: {

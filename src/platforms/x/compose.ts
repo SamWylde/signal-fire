@@ -291,12 +291,16 @@ async function openSidebarComposerWithEditor(page: Page): Promise<XOpenedCompose
  * (e.g. "grantwriting" vs "grant writing") still produces a real mismatch.
  */
 export function normalizeXTextForCompare(text: string): string {
-  return text
-    .replace(/[​-‍﻿­]/g, '')
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
-    .replace(/ /g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return (
+    text
+      // biome-ignore lint/suspicious/noMisleadingCharacterClass: intentional zero-width / joiner stripping for X text comparison
+      .replace(/[​-‍﻿­]/g, '')
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional control-character stripping for X text comparison
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      .replace(/ /g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
 }
 
 const X_URL_RE = /https?:\/\/\S+/g;
@@ -320,13 +324,14 @@ export function verifyXTextMatch(expected: string, actual: string): boolean {
   const segments: Array<{ kind: 'text' | 'url'; value: string }> = [];
   let lastIndex = 0;
   X_URL_RE.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = X_URL_RE.exec(normExpected)) !== null) {
+  let match: RegExpExecArray | null = X_URL_RE.exec(normExpected);
+  while (match !== null) {
     if (match.index > lastIndex) {
       segments.push({ kind: 'text', value: normExpected.slice(lastIndex, match.index) });
     }
     segments.push({ kind: 'url', value: match[0] });
     lastIndex = match.index + match[0].length;
+    match = X_URL_RE.exec(normExpected);
   }
   if (lastIndex < normExpected.length) {
     segments.push({ kind: 'text', value: normExpected.slice(lastIndex) });

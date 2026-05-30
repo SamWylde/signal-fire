@@ -5,7 +5,10 @@ import * as path from 'node:path';
 
 import { BrowserWindow, Menu, app, screen, shell } from 'electron';
 
+import { createLogger } from '../core/logging.js';
 import { type UiServerHandle, startUiServer } from '../ui/server.js';
+
+const log = createLogger('desktop');
 
 const SPLASH_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <style>
@@ -53,7 +56,7 @@ function loadWindowState(): WindowState | null {
   try {
     state = JSON.parse(raw) as WindowState;
   } catch {
-    console.warn('[signal-fire] window-state.json is malformed, ignoring');
+    log.warn('window-state.json is malformed, ignoring');
     return null;
   }
   // Validate x/y are within current display bounds; drop them if not
@@ -148,7 +151,7 @@ function focusMainWindow(): void {
     if (uiServer !== null) {
       const w = createWindow();
       void w.loadURL(uiServer.url).catch((err) => {
-        console.error('[signal-fire] loadURL failed:', err);
+        log.error('loadURL failed:', err);
       });
       mainWindow = w;
     } else {
@@ -250,7 +253,7 @@ async function startDesktop(): Promise<void> {
     return;
   }
   void mainWindow.loadURL(uiServer.url).catch((err) => {
-    console.error('[signal-fire] Failed to load UI server URL:', err);
+    log.error('Failed to load UI server URL:', err);
   });
 
   if (pendingFocus) {
@@ -269,7 +272,7 @@ if (!hasSingleInstanceLock) {
     .then(startDesktop)
     .catch((err: unknown) => {
       const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-      console.error(message);
+      log.error(message);
       app.quit();
     });
 }
@@ -278,7 +281,7 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0 && uiServer !== null) {
     const w = createWindow();
     void w.loadURL(uiServer.url).catch((err) => {
-      console.error('[signal-fire] loadURL failed:', err);
+      log.error('loadURL failed:', err);
     });
     mainWindow = w;
   }
@@ -297,7 +300,7 @@ app.on('before-quit', (event) => {
   closeUiServer()
     .catch((err: unknown) => {
       const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-      console.error(message);
+      log.error(message);
     })
     .finally(() => app.quit());
 });

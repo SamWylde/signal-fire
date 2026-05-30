@@ -86,6 +86,22 @@ export interface HumanTypeOptions {
   rng?: () => number;
 }
 
+/** Builds the typing options shared by the LinkedIn / Facebook / Instagram composers. */
+export function buildTypingOptions(input: {
+  typingSpeedMultiplier?: number;
+  wordPauseMaxMs?: number;
+}): HumanTypeOptions {
+  return {
+    naturalCadence: true,
+    ...(input.typingSpeedMultiplier !== undefined && {
+      typingSpeedMultiplier: input.typingSpeedMultiplier,
+    }),
+    ...(input.wordPauseMaxMs !== undefined && {
+      wordPauseMaxMs: input.wordPauseMaxMs,
+    }),
+  };
+}
+
 export type HumanTypingStepKind = 'word' | 'space' | 'punctuation' | 'linebreak' | 'symbol';
 
 export interface HumanTypingStep {

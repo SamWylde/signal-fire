@@ -7,9 +7,12 @@ import {
 } from '../../core/browser.js';
 import { captureFailureArtifacts } from '../../core/debug-artifacts.js';
 import { recordAction } from '../../core/ledger.js';
+import { createLogger } from '../../core/logging.js';
 import { type ActionLimits, checkAllLimits } from '../../core/rate-limiter.js';
 import { markUserDataDirValidated } from '../../core/session.js';
 import type { AccountId, PostResult } from '../../core/types.js';
+
+const log = createLogger('x');
 import { type XAuthInput, applyXAuth, isLoggedIn } from './auth.js';
 import { type XComposeInput, postTweet } from './compose.js';
 
@@ -106,7 +109,7 @@ export async function post(input: XComposeInput, options: XPostOptions): Promise
       try {
         await markUserDataDirValidated('x', accountId);
       } catch (err) {
-        console.error('Failed to mark session validated:', err);
+        log.error('Failed to mark session validated:', err);
       }
       keepOpen = true;
       return {

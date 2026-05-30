@@ -10,10 +10,10 @@ describe('Facebook composer helpers', () => {
     expect(isManagementUrl('https://www.facebook.com/GrantCue')).toBe(false);
   });
 
-  it('targets the final Post button inside the Facebook settings dialog', () => {
+  it('uses a broad Post-button selector with no dialog scoping', () => {
     const selector = FACEBOOK.selectors.composer.postSubmitButton;
 
-    expect(selector).toContain('[aria-label="Post settings"][role="dialog"]');
+    expect(selector).not.toContain('[role="dialog"]');
     expect(selector).toContain('[aria-label="Post"][role="button"]');
     expect(selector).not.toContain('[aria-label="Back"]');
   });

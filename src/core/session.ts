@@ -3,6 +3,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { getSignalFireHome, legacyAccountIdVariants, sanitizeAccountId } from './account-id.js';
+import { createLogger } from './logging.js';
+
+const log = createLogger('session');
 import type { BrowserContext } from './browser.js';
 import { uniqueTempPath, withFileLock } from './file-lock.js';
 import type { AccountId, Platform } from './types.js';
@@ -134,7 +137,7 @@ export async function migrateProfileDirIfNeeded(
   // Move winner to the new shared path.
   await fs.mkdir(path.dirname(newPath), { recursive: true });
   await fs.rename(winner.dirPath, newPath);
-  process.stderr.write(`[signal-fire] migrated profile: ${winner.dirPath} → ${newPath}\n`);
+  log.info(`migrated profile: ${winner.dirPath} → ${newPath}`);
 
   // Archive the losers to profiles-legacy/.
   for (const loser of losers) {
@@ -145,9 +148,7 @@ export async function migrateProfileDirIfNeeded(
     );
     await fs.mkdir(path.dirname(legacyPath), { recursive: true });
     await fs.rename(loser.dirPath, legacyPath);
-    process.stderr.write(
-      `[signal-fire] archived legacy profile: ${loser.dirPath} → ${legacyPath}\n`,
-    );
+    log.info(`archived legacy profile: ${loser.dirPath} → ${legacyPath}`);
   }
 }
 

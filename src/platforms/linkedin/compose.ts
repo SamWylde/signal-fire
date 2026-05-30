@@ -1,5 +1,6 @@
 import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
-import { humanType, jitterSleep } from '../../core/humanize.js';
+import { buildTypingOptions, humanType, jitterSleep } from '../../core/humanize.js';
+import { clickFirstVisible } from '../../core/locators.js';
 import { humanClick } from '../../core/mouse.js';
 import { LINKEDIN } from './selectors.js';
 
@@ -32,22 +33,6 @@ export interface LinkedInComposeResult {
 
 function logLinkedIn(input: LinkedInComposeInput, message: string, detail?: string): void {
   input.onLog?.(message, detail);
-}
-
-function typingOptions(input: LinkedInComposeInput): {
-  naturalCadence: true;
-  typingSpeedMultiplier?: number;
-  wordPauseMaxMs?: number;
-} {
-  return {
-    naturalCadence: true,
-    ...(input.typingSpeedMultiplier !== undefined && {
-      typingSpeedMultiplier: input.typingSpeedMultiplier,
-    }),
-    ...(input.wordPauseMaxMs !== undefined && {
-      wordPauseMaxMs: input.wordPauseMaxMs,
-    }),
-  };
 }
 
 export function extractLinkedInCompanyIdFromUrl(pageUrl: string | undefined): string | undefined {
@@ -116,21 +101,6 @@ export function getCompanyPageCandidateUrls(pageUrl: string): string[] {
     `${parsed.origin}/company/${slug}/admin/dashboard/`,
     `${parsed.origin}/company/${slug}/admin/feed/posts/`,
   ].filter((url, index, urls) => urls.indexOf(url) === index);
-}
-
-async function clickFirstVisible(
-  page: Page,
-  locators: Locator[],
-  timeoutMs: number,
-): Promise<boolean> {
-  for (const locator of locators) {
-    const candidate = locator.first();
-    if (!(await isLocatorVisible(candidate, timeoutMs))) continue;
-    await humanClick(page, candidate);
-    return true;
-  }
-
-  return false;
 }
 
 async function waitForFeedConfirmation(
@@ -443,7 +413,7 @@ async function createPostViaDirectUrl(
 
     logLinkedIn(input, 'Typing LinkedIn post text');
     await humanClick(page, editorLocator);
-    await humanType(editorLocator, clampedText, typingOptions(input));
+    await humanType(editorLocator, clampedText, buildTypingOptions(input));
 
     if (input.dryRun) {
       logLinkedIn(input, 'LinkedIn post ready for manual submit');
@@ -506,13 +476,13 @@ async function createPostViaDirectUrl(
   if (input.title !== undefined && input.title.trim().length > 0) {
     const titleLocator = page.locator(LINKEDIN.selectors.article.titleTextarea).first();
     await humanClick(page, titleLocator);
-    await humanType(titleLocator, input.title, typingOptions(input));
+    await humanType(titleLocator, input.title, buildTypingOptions(input));
   }
 
   const bodyLocator = page.locator(LINKEDIN.selectors.article.bodyEditor).first();
   logLinkedIn(input, 'Typing LinkedIn article body');
   await humanClick(page, bodyLocator);
-  await humanType(bodyLocator, clampedText, typingOptions(input));
+  await humanType(bodyLocator, clampedText, buildTypingOptions(input));
 
   await jitterSleep(800, 0.4);
   logLinkedIn(input, 'Opening LinkedIn article share modal');
@@ -528,7 +498,7 @@ async function createPostViaDirectUrl(
   if (input.shareIntro !== undefined && input.shareIntro.trim().length > 0) {
     const introLocator = page.locator(LINKEDIN.selectors.article.shareModalIntroEditor).first();
     await humanClick(page, introLocator);
-    await humanType(introLocator, input.shareIntro, typingOptions(input));
+    await humanType(introLocator, input.shareIntro, buildTypingOptions(input));
   }
 
   if (input.dryRun) {
@@ -731,7 +701,7 @@ export async function createPost(
 
   logLinkedIn(resolvedInput, 'Typing LinkedIn composer text');
   await humanClick(page, editorLocator);
-  await humanType(editorLocator, clampedText, typingOptions(input));
+  await humanType(editorLocator, clampedText, buildTypingOptions(input));
 
   await page.waitForFunction(
     (selectors: string[]) => {

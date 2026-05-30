@@ -1,3 +1,5 @@
+import { DEFAULT_TIMEOUTS } from '../../core/timeouts.js';
+
 export const X = {
   urls: {
     home: 'https://x.com/home',
@@ -6,9 +8,7 @@ export const X = {
     composeTweet: 'https://x.com/compose/tweet',
   },
   timeouts: {
-    shortMs: 5_000,
-    mediumMs: 10_000,
-    longMs: 30_000,
+    ...DEFAULT_TIMEOUTS,
     postReadyMs: 30_000,
   },
   selectors: {

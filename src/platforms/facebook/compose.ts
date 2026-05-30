@@ -1,5 +1,6 @@
 import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
-import { humanType, jitterSleep } from '../../core/humanize.js';
+import { buildTypingOptions, humanType, jitterSleep } from '../../core/humanize.js';
+import { clickFirstVisible } from '../../core/locators.js';
 import { humanClick } from '../../core/mouse.js';
 import { FACEBOOK } from './selectors.js';
 
@@ -52,44 +53,6 @@ export function isManagementUrl(value: string): boolean {
       /facebook\.com\/.*\/(admin|dashboard)(\/|$)/i.test(value)
     );
   }
-}
-
-async function clickFirstVisible(
-  page: Page,
-  locators: Locator[],
-  timeoutMs: number,
-): Promise<boolean> {
-  for (const locator of locators) {
-    const candidate = locator.first();
-    if (!(await isLocatorVisible(candidate, timeoutMs))) continue;
-    await humanClick(page, candidate);
-    return true;
-  }
-  return false;
-}
-
-async function setFirstAttachedFileInput(
-  locators: Locator[],
-  filePath: string,
-  timeoutMs: number,
-): Promise<void> {
-  let lastError: unknown = null;
-  for (const locator of locators) {
-    try {
-      const input = locator.first();
-      await input.waitFor({ state: 'attached', timeout: timeoutMs });
-      await input.setInputFiles(filePath);
-      return;
-    } catch (err) {
-      lastError = err;
-    }
-  }
-
-  throw new Error(
-    `Could not attach Facebook image file: ${
-      lastError instanceof Error ? lastError.message : String(lastError)
-    }`,
-  );
 }
 
 function facebookComposerTriggers(page: Page): Locator[] {
@@ -154,9 +117,7 @@ async function dismissCallNowPromoIfVisible(
   // asking to add a Call Now button. It overlays the settings dialog and blocks the
   // submission flow until dismissed. Short wait — the popup either appears within ~2s
   // or doesn't appear at all.
-  const promo = page
-    .locator('[aria-label="Speak With People Directly"][role="dialog"]')
-    .first();
+  const promo = page.locator('[aria-label="Speak With People Directly"][role="dialog"]').first();
   const visible = await promo
     .waitFor({ state: 'visible', timeout: 2000 })
     .then(() => true)
@@ -367,13 +328,7 @@ export async function createPost(
     );
   }
 
-  await humanType(textEditor, input.text, {
-    naturalCadence: true,
-    ...(input.typingSpeedMultiplier !== undefined && {
-      typingSpeedMultiplier: input.typingSpeedMultiplier,
-    }),
-    ...(input.wordPauseMaxMs !== undefined && { wordPauseMaxMs: input.wordPauseMaxMs }),
-  });
+  await humanType(textEditor, input.text, buildTypingOptions(input));
   await jitterSleep(500, 0.5);
 
   // Verify the text actually landed in the editor. If FB's single-character-shortcut

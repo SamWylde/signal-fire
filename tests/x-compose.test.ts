@@ -103,7 +103,11 @@ describe('waitForStableXPostButtonEnabled', () => {
       ariaDisabled: 'true',
     });
     await expect(
-      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 50),
+      waitForStableXPostButtonEnabled(
+        page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0],
+        'sel',
+        50,
+      ),
     ).rejects.toThrow('not visible');
   });
 
@@ -114,7 +118,11 @@ describe('waitForStableXPostButtonEnabled', () => {
       ariaDisabled: 'true',
     });
     await expect(
-      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 50),
+      waitForStableXPostButtonEnabled(
+        page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0],
+        'sel',
+        50,
+      ),
     ).rejects.toThrow('did not stabilize');
   });
 
@@ -125,7 +133,11 @@ describe('waitForStableXPostButtonEnabled', () => {
       ariaDisabled: 'false',
     });
     await expect(
-      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 1000),
+      waitForStableXPostButtonEnabled(
+        page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0],
+        'sel',
+        1000,
+      ),
     ).resolves.toBeUndefined();
   });
 
@@ -139,7 +151,11 @@ describe('waitForStableXPostButtonEnabled', () => {
       ariaDisabled: 'false',
     });
     await expect(
-      waitForStableXPostButtonEnabled(page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0], 'sel', 2000),
+      waitForStableXPostButtonEnabled(
+        page as unknown as Parameters<typeof waitForStableXPostButtonEnabled>[0],
+        'sel',
+        2000,
+      ),
     ).resolves.toBeUndefined();
   });
 });

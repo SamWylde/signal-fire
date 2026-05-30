@@ -22,6 +22,7 @@ import {
 } from '../core/credential-store.js';
 import { type ResizedVariant, resizeImageForPlatforms } from '../core/imageResize.js';
 import { countRecent } from '../core/ledger.js';
+import { createLogger } from '../core/logging.js';
 import type { ActionLimits } from '../core/rate-limiter.js';
 import {
   clearSession,
@@ -35,6 +36,8 @@ import type { AccountId, PostResult } from '../core/types.js';
 import { POSTING_PLATFORMS, type PostingPlatform } from '../core/types.js';
 import { REDESIGNED_APP_HTML } from './app-html.js';
 import { safeFetchToBuffer } from './safe-fetch.js';
+
+const log = createLogger('ui');
 
 const LOGIN_URLS: Record<PostingPlatform, string> = {
   tiktok: 'https://www.tiktok.com/login',
@@ -567,7 +570,7 @@ async function pruneOldDraftFiles(kind: string, keepFilePath: string): Promise<v
       .filter((name) => name !== keepName)
       .map((name) =>
         fs.unlink(path.join(dir, name)).catch((err: unknown) => {
-          process.stderr.write(`[signal-fire] could not prune old draft ${name}: ${err}\n`);
+          log.warn(`could not prune old draft ${name}:`, err);
         }),
       ),
   );
@@ -693,7 +696,7 @@ async function saveDraftFile(
       }
       ref.platformVariants = platformVariants;
     } catch (err) {
-      process.stderr.write(`[signal-fire] image resize failed: ${err}\n`);
+      log.warn('image resize failed:', err);
       imageResizeError = { message: err instanceof Error ? err.message : String(err) };
     }
   }
@@ -1263,9 +1266,7 @@ async function buildPostInput(
         postAs === 'page' &&
         (facebookPageName === undefined || facebookPageName.trim().length === 0)
       ) {
-        process.stderr.write(
-          '[facebook] postAs=page but no page name provided; will default to personal\n',
-        );
+        log.warn('postAs=page but no page name provided; will default to personal');
         postAs = 'personal';
       }
       return {
@@ -1660,9 +1661,7 @@ function buildCampaignInput(
         postAs === 'page' &&
         (facebookPageName === undefined || facebookPageName.trim().length === 0)
       ) {
-        process.stderr.write(
-          '[facebook] postAs=page but no page name provided; will default to personal\n',
-        );
+        log.warn('postAs=page but no page name provided; will default to personal');
         postAs = 'personal';
       }
       const facebookImagePath = assets.platformImages?.facebook ?? assets.imagePath;
@@ -2122,7 +2121,7 @@ function startQueueScheduler(): NodeJS.Timeout {
   const timer = setInterval(() => {
     processDueQueue().catch((err: unknown) => {
       const message = err instanceof Error ? (err.stack ?? err.message) : String(err);
-      console.error(message);
+      log.error(message);
     });
   }, QUEUE_POLL_INTERVAL_MS);
   timer.unref();
@@ -2192,20 +2191,20 @@ export async function deleteAccount(
     const fingerprintPath = path.join(root, 'fingerprints', `${safe}.json`);
     try {
       await fs.rm(fingerprintPath, { force: true });
-      process.stderr.write(`deleteAccount: removed ${fingerprintPath}\n`);
+      log.info('deleteAccount: removed', fingerprintPath);
       deleted.push(fingerprintPath);
     } catch (err) {
-      process.stderr.write(`deleteAccount: skipped ${fingerprintPath}: ${String(err)}\n`);
+      log.warn('deleteAccount: skipped', fingerprintPath, String(err));
     }
 
     // New shared profile path (profiles/<safe>)
     const profileDir = path.join(root, 'profiles', safe);
     try {
       await fs.rm(profileDir, { recursive: true, force: true });
-      process.stderr.write(`deleteAccount: removed ${profileDir}\n`);
+      log.info('deleteAccount: removed', profileDir);
       deleted.push(profileDir);
     } catch (err) {
-      process.stderr.write(`deleteAccount: skipped ${profileDir}: ${String(err)}\n`);
+      log.warn('deleteAccount: skipped', profileDir, String(err));
     }
 
     // Legacy per-platform profile paths (profiles/<platform>/<safe>)
@@ -2213,10 +2212,10 @@ export async function deleteAccount(
       const legacyProfileDir = path.join(root, 'profiles', platform, safe);
       try {
         await fs.rm(legacyProfileDir, { recursive: true, force: true });
-        process.stderr.write(`deleteAccount: removed legacy profile ${legacyProfileDir}\n`);
+        log.info('deleteAccount: removed legacy profile', legacyProfileDir);
         deleted.push(legacyProfileDir);
       } catch (err) {
-        process.stderr.write(`deleteAccount: skipped ${legacyProfileDir}: ${String(err)}\n`);
+        log.warn('deleteAccount: skipped', legacyProfileDir, String(err));
       }
     }
 
@@ -2226,48 +2225,48 @@ export async function deleteAccount(
       for (const p of [sessionFile, metaFile]) {
         try {
           await fs.rm(p, { force: true });
-          process.stderr.write(`deleteAccount: removed ${p}\n`);
+          log.info('deleteAccount: removed', p);
           deleted.push(p);
         } catch (err) {
-          process.stderr.write(`deleteAccount: skipped ${p}: ${String(err)}\n`);
+          log.warn('deleteAccount: skipped', p, String(err));
         }
       }
 
       const credFile = path.join(root, 'credentials', platform, `${safe}.json`);
       try {
         await fs.rm(credFile, { force: true });
-        process.stderr.write(`deleteAccount: removed ${credFile}\n`);
+        log.info('deleteAccount: removed', credFile);
         deleted.push(credFile);
       } catch (err) {
-        process.stderr.write(`deleteAccount: skipped ${credFile}: ${String(err)}\n`);
+        log.warn('deleteAccount: skipped', credFile, String(err));
       }
 
       const blockFile = path.join(root, 'blocks', platform, `${safe}.json`);
       try {
         await fs.rm(blockFile, { force: true });
-        process.stderr.write(`deleteAccount: removed ${blockFile}\n`);
+        log.info('deleteAccount: removed', blockFile);
         deleted.push(blockFile);
       } catch (err) {
-        process.stderr.write(`deleteAccount: skipped ${blockFile}: ${String(err)}\n`);
+        log.warn('deleteAccount: skipped', blockFile, String(err));
       }
 
       const ledgerFile = path.join(root, 'ledger', platform, `${safe}.json`);
       try {
         await fs.rm(ledgerFile, { force: true });
-        process.stderr.write(`deleteAccount: removed ${ledgerFile}\n`);
+        log.info('deleteAccount: removed', ledgerFile);
         deleted.push(ledgerFile);
       } catch (err) {
-        process.stderr.write(`deleteAccount: skipped ${ledgerFile}: ${String(err)}\n`);
+        log.warn('deleteAccount: skipped', ledgerFile, String(err));
       }
 
       // Legacy archived profile dirs written by migrateProfileDirIfNeeded
       const profilesLegacyDir = path.join(root, 'profiles-legacy', `${platform}-${safe}`);
       try {
         await fs.rm(profilesLegacyDir, { recursive: true, force: true });
-        process.stderr.write(`deleteAccount: removed ${profilesLegacyDir}\n`);
+        log.info('deleteAccount: removed', profilesLegacyDir);
         deleted.push(profilesLegacyDir);
       } catch (err) {
-        process.stderr.write(`deleteAccount: skipped ${profilesLegacyDir}: ${String(err)}\n`);
+        log.warn('deleteAccount: skipped', profilesLegacyDir, String(err));
       }
     }
   }
@@ -2966,7 +2965,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
   try {
     await clearRunLog();
   } catch (err) {
-    process.stderr.write(`[signal-fire] could not clear run log on startup: ${err}\n`);
+    log.warn('could not clear run log on startup:', err);
   }
 
   const host = options.host ?? '127.0.0.1';
@@ -2995,8 +2994,8 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     } catch (err) {
       if (!isRetryableListenError(err)) throw err;
       const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
-      process.stderr.write(
-        `[signal-fire] local UI port ${formatPortCandidate(port)} unavailable (${code}); trying another port\n`,
+      log.warn(
+        `local UI port ${formatPortCandidate(port)} unavailable (${code}); trying another port`,
       );
     }
   }
