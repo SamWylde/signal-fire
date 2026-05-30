@@ -212,6 +212,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
     .compose-body {
       flex: 1;
       min-height: 0;
+      min-width: 0;
       display: grid;
       grid-template-columns: 250px minmax(360px, 1fr) 340px;
       gap: 16px;
@@ -637,7 +638,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
       </div>
 
       <form id="campaignForm" class="view active" data-view="compose">
-        <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+        <div style="flex:1;display:flex;flex-direction:column;min-height:0;min-width:0">
           <section class="safety">
             <b>Safety profile</b>
             <span>Delay <span id="delaySummary" style="font-family:var(--mono)">120-300s</span></span>
