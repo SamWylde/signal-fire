@@ -1,5 +1,8 @@
 import type { Locator, Page } from 'patchright';
+import { createLogger } from './logging.js';
 import { sleep } from './timing.js';
+
+const log = createLogger('mouse');
 
 export interface Point {
   x: number;
@@ -358,9 +361,7 @@ export async function humanClick(
   } catch (err) {
     const maybeClickable = locator as Locator & { click?: () => Promise<void> };
     if (typeof maybeClickable.click === 'function') {
-      process.stderr.write(
-        '[mouse] humanClick falling back to locator.click() — element has no visible bounding box\n',
-      );
+      log.info('humanClick falling back to locator.click() — element has no visible bounding box');
       await maybeClickable.click();
       return;
     }

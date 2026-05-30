@@ -4,6 +4,10 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
+import { createLogger } from './logging.js';
+
+const log = createLogger('account-id');
+
 /**
  * Returns the signal-fire home directory.
  * Respects SIGNAL_FIRE_HOME env override for tests.
@@ -144,7 +148,7 @@ export async function migrateLegacyAccountIds(): Promise<void> {
       if (!fsSync.existsSync(newPath)) {
         // Simple case: decoded path doesn't exist yet
         await fs.rename(oldPath, newPath);
-        process.stderr.write(`[migrate] ${dirPath}/${name} → ${decodedName}\n`);
+        log.info(`${dirPath}/${name} → ${decodedName}`);
       } else {
         // Both exist — keep the older one (real data), archive the newer one
         const [oldStat, newStat] = await Promise.all([fs.stat(oldPath), fs.stat(newPath)]);
@@ -157,17 +161,13 @@ export async function migrateLegacyAccountIds(): Promise<void> {
           await fs.mkdir(path.dirname(archivePath), { recursive: true });
           await fs.rename(newPath, archivePath);
           await fs.rename(oldPath, newPath);
-          process.stderr.write(
-            `[migrate] swapped ${relDir}/${name} ↔ ${decodedName} (encoded had real data)\n`,
-          );
+          log.info(`swapped ${relDir}/${name} ↔ ${decodedName} (encoded had real data)`);
         } else {
           // The decoded entry is OLDER — it has real data. Archive the encoded (fresh/empty) one.
           const archivePath = path.join(root, 'legacy-encoded', `${relDir}-${name}`);
           await fs.mkdir(path.dirname(archivePath), { recursive: true });
           await fs.rename(oldPath, archivePath);
-          process.stderr.write(
-            `[migrate] archived fresh encoded ${relDir}/${name} (decoded has real data)\n`,
-          );
+          log.info(`archived fresh encoded ${relDir}/${name} (decoded has real data)`);
         }
       }
     }

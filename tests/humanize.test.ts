@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildNaturalTypingPlan,
+  buildTypingOptions,
   jitterSleep,
   randomFloat,
   randomInt,
@@ -191,5 +192,33 @@ describe('buildNaturalTypingPlan', () => {
     const sumA = planAt20.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
     const sumB = planAt50.reduce((a, s) => a + s.keyDelayMs + s.delayAfterMs, 0);
     expect(sumA).toBeCloseTo(sumB, 5);
+  });
+});
+
+describe('buildTypingOptions', () => {
+  it('returns naturalCadence:true with no extra fields when given empty input', () => {
+    expect(buildTypingOptions({})).toEqual({ naturalCadence: true });
+  });
+
+  it('includes typingSpeedMultiplier when provided', () => {
+    expect(buildTypingOptions({ typingSpeedMultiplier: 2 })).toEqual({
+      naturalCadence: true,
+      typingSpeedMultiplier: 2,
+    });
+  });
+
+  it('includes wordPauseMaxMs when provided', () => {
+    expect(buildTypingOptions({ wordPauseMaxMs: 40 })).toEqual({
+      naturalCadence: true,
+      wordPauseMaxMs: 40,
+    });
+  });
+
+  it('includes both typingSpeedMultiplier and wordPauseMaxMs when both provided', () => {
+    expect(buildTypingOptions({ typingSpeedMultiplier: 2, wordPauseMaxMs: 40 })).toEqual({
+      naturalCadence: true,
+      typingSpeedMultiplier: 2,
+      wordPauseMaxMs: 40,
+    });
   });
 });

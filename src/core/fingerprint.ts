@@ -3,6 +3,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
 import { getSignalFireHome, sanitizeAccountId } from './account-id.js';
+import { createLogger } from './logging.js';
+
+const log = createLogger('fingerprint');
 import { uniqueTempPath, withFileLock } from './file-lock.js';
 import type { AccountId } from './types.js';
 
@@ -424,13 +427,13 @@ function logStaleReason(
   current: number | null,
 ): void {
   if (isLocaleStale(fp)) {
-    process.stderr.write(
-      `[fingerprint] ${accountId} has stale locale (was ${fp.locale}, host is ${hostLocale()}) — regenerating\n`,
+    log.info(
+      `${accountId} has stale locale (was ${fp.locale}, host is ${hostLocale()}) — regenerating`,
     );
   } else {
     const persistedMajor = chromeMajorFromUA(fp.userAgent);
-    process.stderr.write(
-      `[fingerprint] ${accountId} is stale (persisted Chrome ${String(persistedMajor)}, current ${String(current)}) — regenerating\n`,
+    log.info(
+      `${accountId} is stale (persisted Chrome ${String(persistedMajor)}, current ${String(current)}) — regenerating`,
     );
   }
 }

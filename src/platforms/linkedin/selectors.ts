@@ -1,3 +1,5 @@
+import { DEFAULT_TIMEOUTS } from '../../core/timeouts.js';
+
 export const LINKEDIN = {
   urls: {
     home: 'https://www.linkedin.com/feed/',
@@ -5,9 +7,7 @@ export const LINKEDIN = {
     checkpoint: 'https://www.linkedin.com/checkpoint', // 2FA / email verify URL prefix
   },
   timeouts: {
-    shortMs: 5_000,
-    mediumMs: 10_000,
-    longMs: 30_000,
+    ...DEFAULT_TIMEOUTS,
     // LinkedIn often shows a multi-step verify flow; allow generous wait for user-driven 2FA
     checkpointMs: 120_000,
   },

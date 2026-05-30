@@ -1,5 +1,6 @@
 import { type Locator, type Page, isLocatorVisible } from '../../core/browser.js';
-import { checkBlocked, humanType, jitterSleep } from '../../core/humanize.js';
+import { buildTypingOptions, checkBlocked, humanType, jitterSleep } from '../../core/humanize.js';
+import { clickFirstVisible } from '../../core/locators.js';
 import { humanClick } from '../../core/mouse.js';
 import { INSTAGRAM } from './selectors.js';
 
@@ -28,34 +29,6 @@ export function hasInstagramShareConfirmationText(value: string): boolean {
     normalized.includes(INSTAGRAM.selectors.composer.shareConfirmationHeading) ||
     normalized.includes(INSTAGRAM.selectors.composer.shareConfirmationText)
   );
-}
-
-async function clickFirstUsable(
-  page: Page,
-  locators: Locator[],
-  timeoutMs: number,
-): Promise<boolean> {
-  for (const locator of locators) {
-    const candidate = locator.first();
-    if (!(await isLocatorVisible(candidate, timeoutMs))) continue;
-    try {
-      await humanClick(page, candidate);
-      return true;
-    } catch {
-      try {
-        await humanClick(
-          page,
-          candidate.locator(
-            'xpath=ancestor::*[self::button or self::a or @role="button" or @role="link"][1]',
-          ),
-        );
-        return true;
-      } catch {
-        // Try the next locator.
-      }
-    }
-  }
-  return false;
 }
 
 async function setFirstAttachedFileInput(
@@ -109,7 +82,9 @@ function postMenuLocators(page: Page): Locator[] {
 }
 
 async function clickPostMenuIfPresent(page: Page, input: InstagramComposeInput): Promise<void> {
-  const clicked = await clickFirstUsable(page, postMenuLocators(page), 2000).catch(() => false);
+  const clicked = await clickFirstVisible(page, postMenuLocators(page), 2000, {
+    tryAncestor: true,
+  }).catch(() => false);
   if (clicked) {
     logInstagram(input, 'Instagram Post menu item selected');
     await jitterSleep(800, 0.4);
@@ -177,12 +152,12 @@ async function clickNextWithRetry(
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const clicked = await clickFirstUsable(page, actionButtonLocators(page, 'Next'), 2500).catch(
-      (err) => {
-        lastError = err;
-        return false;
-      },
-    );
+    const clicked = await clickFirstVisible(page, actionButtonLocators(page, 'Next'), 2500, {
+      tryAncestor: true,
+    }).catch((err) => {
+      lastError = err;
+      return false;
+    });
     if (clicked) {
       logInstagram(input, `${screenName} Next button clicked`, `attempt ${attempt}`);
       await page.waitForTimeout(800);
@@ -219,7 +194,7 @@ export async function createPost(
 
   // --- Step 3: Click "New post" trigger ---
   // Primary: verified a[aria-label="New post"] from sidebar nav HTML (2026-05-20)
-  const triggerClicked = await clickFirstUsable(
+  const triggerClicked = await clickFirstVisible(
     page,
     [
       page.locator(INSTAGRAM.selectors.composer.newPostTrigger),
@@ -228,6 +203,7 @@ export async function createPost(
       page.locator("a[href*='/create']"),
     ],
     shortMs,
+    { tryAncestor: true },
   );
 
   if (!triggerClicked) {
@@ -321,15 +297,7 @@ export async function createPost(
     const captionLocator = page.locator(INSTAGRAM.selectors.composer.captionEditor).first();
     await humanClick(page, captionLocator);
     logInstagram(input, 'Typing Instagram caption');
-    await humanType(captionLocator, captionText, {
-      naturalCadence: true,
-      ...(input.typingSpeedMultiplier !== undefined && {
-        typingSpeedMultiplier: input.typingSpeedMultiplier,
-      }),
-      ...(input.wordPauseMaxMs !== undefined && {
-        wordPauseMaxMs: input.wordPauseMaxMs,
-      }),
-    });
+    await humanType(captionLocator, captionText, buildTypingOptions(input));
   }
 
   // --- Step 11: Click Share (three-tier fallback) ---
@@ -342,7 +310,9 @@ export async function createPost(
   let shareError: unknown = null;
 
   try {
-    const clicked = await clickFirstUsable(page, actionButtonLocators(page, 'Share'), mediumMs);
+    const clicked = await clickFirstVisible(page, actionButtonLocators(page, 'Share'), mediumMs, {
+      tryAncestor: true,
+    });
     if (!clicked) throw new Error('Could not find Instagram Share button');
     shareError = null;
   } catch (err) {
@@ -394,13 +364,14 @@ export async function createPost(
     throw new Error('Post may not have been published (no share confirmation appeared)');
   }
 
-  const doneClicked = await clickFirstUsable(
+  const doneClicked = await clickFirstVisible(
     page,
     [
       page.getByRole('button', { name: /^Done$/i }),
       page.locator(INSTAGRAM.selectors.composer.doneButton),
     ],
     shortMs,
+    { tryAncestor: true },
   ).catch(() => false);
   if (doneClicked) {
     logInstagram(input, 'Instagram success dialog closed');

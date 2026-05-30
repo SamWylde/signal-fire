@@ -1,12 +1,12 @@
+import { DEFAULT_TIMEOUTS } from '../../core/timeouts.js';
+
 export const INSTAGRAM = {
   urls: {
     home: 'https://www.instagram.com/',
     login: 'https://www.instagram.com/accounts/login/',
   },
   timeouts: {
-    shortMs: 5_000,
-    mediumMs: 10_000,
-    longMs: 30_000,
+    ...DEFAULT_TIMEOUTS,
     uploadProcessingMs: 120_000,
   },
   selectors: {

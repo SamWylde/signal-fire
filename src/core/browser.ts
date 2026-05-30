@@ -2,6 +2,10 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { createLogger } from './logging.js';
+
+const log = createLogger('browser');
+
 import type { BrowserContext, Locator, Page } from 'patchright';
 
 type PatchrightModule = typeof import('patchright');
@@ -121,13 +125,9 @@ export function findChromeExecutable(): string | null {
   cachedChromePath = found ?? null;
   if (!loggedChromeDetection) {
     loggedChromeDetection = true;
-    process.stderr.write(
-      `[signal-fire] Chrome detection: ${cachedChromePath === null ? 'NOT FOUND' : cachedChromePath}\n`,
-    );
+    log.info(`Chrome detection: ${cachedChromePath === null ? 'NOT FOUND' : cachedChromePath}`);
     for (const r of results) {
-      process.stderr.write(
-        `  ${r.exists ? '✓' : '✗'} ${r.path}${r.error ? ` (error: ${r.error})` : ''}\n`,
-      );
+      log.info(`  ${r.exists ? '✓' : '✗'} ${r.path}${r.error ? ` (error: ${r.error})` : ''}`);
     }
   }
   return cachedChromePath;
@@ -225,7 +225,7 @@ async function normalizeFingerprintForRuntime(fp: AccountFingerprint): Promise<A
 function warnOnce(key: string, message: string): void {
   if (warnedLaunchOptions.has(key)) return;
   warnedLaunchOptions.add(key);
-  process.stderr.write(`[signal-fire] ${message}\n`);
+  log.info(message);
 }
 
 function warnIgnoredLaunchOptions(opts: LaunchOptions): void {
