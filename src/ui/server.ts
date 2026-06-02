@@ -15,6 +15,7 @@ import {
   type Page,
   launchBrowser,
 } from '../core/browser.js';
+import { runConnectionChecks } from '../core/connection-check.js';
 import {
   clearStoredCredentials,
   readStoredCredentials,
@@ -24,6 +25,7 @@ import { type ResizedVariant, resizeImageForPlatforms } from '../core/imageResiz
 import { countRecent } from '../core/ledger.js';
 import { createLogger } from '../core/logging.js';
 import type { ActionLimits } from '../core/rate-limiter.js';
+import { shouldStopCampaignAfterError } from '../core/safety-patterns.js';
 import {
   clearSession,
   ensureSignalFireDir,
@@ -38,6 +40,10 @@ import { REDESIGNED_APP_HTML } from './app-html.js';
 import { safeFetchToBuffer } from './safe-fetch.js';
 
 const log = createLogger('ui');
+
+// Re-exported for tests and callers that import it from the UI module (the
+// implementation now lives in core/safety-patterns.ts).
+export { shouldStopCampaignAfterError };
 
 const LOGIN_URLS: Record<PostingPlatform, string> = {
   tiktok: 'https://www.tiktok.com/login',
@@ -176,6 +182,7 @@ export interface UiServerHandle {
 
 const loginFlows = new Map<string, LoginFlow>();
 const activePosting = new Map<string, number>();
+const connectionCheckActive = new Set<string>();
 let runLogWriteQueue: Promise<void> = Promise.resolve();
 
 export const MANUAL_VERIFY_PLATFORMS = ['linkedin', 'x', 'facebook', 'instagram'] as const;
@@ -239,6 +246,32 @@ function isPostingActive(accountId: string): boolean {
   return (activePosting.get(accountId) ?? 0) > 0;
 }
 
+function accountLockKey(accountId: string): string {
+  const trimmed = accountId.trim();
+  let decoded = trimmed;
+  try {
+    decoded = decodeURIComponent(trimmed);
+  } catch {
+    // Keep the original if it is not valid percent-encoding.
+  }
+  return accountKey(decoded).replace(/[\s_-]+/g, '');
+}
+
+function acquireConnectionCheckLock(accountId: string): string {
+  const key = accountLockKey(accountId);
+  connectionCheckActive.add(key);
+  return key;
+}
+
+function releaseConnectionCheckLock(key: string): void {
+  connectionCheckActive.delete(key);
+}
+
+function isConnectionCheckActiveForAccount(accountId: string): boolean {
+  const key = accountLockKey(accountId);
+  return key.length > 0 && connectionCheckActive.has(key);
+}
+
 export class ConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -296,7 +329,20 @@ function assertNoManualVerifyForAutomaticPost(accountId: string): void {
       `Manual prepare is starting for account "${accountId}". Wait for it to finish before automatic posting.`,
     );
   }
+  if (isPostingActiveForAccount(accountId)) {
+    throw new ConflictError(
+      'A posting flow is active for this account. Wait for it to complete first.',
+    );
+  }
   if (isManualVerifyActive(accountId)) throw new ManualVerifyActiveError(accountId);
+  if (isLoginFlowActiveForAccount(accountId)) {
+    throw new ConflictError('A login browser is open for this account. Close it first.');
+  }
+  if (isConnectionCheckActiveForAccount(accountId)) {
+    throw new ConflictError(
+      'A connection check is active for this account. Wait for it to complete first.',
+    );
+  }
 }
 
 function assertCanStartManualVerify(accountId: string): void {
@@ -307,13 +353,20 @@ function assertCanStartManualVerify(accountId: string): void {
     );
   }
   if (isPostingActiveForAccount(accountId)) {
-    throw new Error('A posting flow is active for this account. Wait for it to complete first.');
+    throw new ConflictError(
+      'A posting flow is active for this account. Wait for it to complete first.',
+    );
   }
   if (isManualVerifyActive(accountId)) {
-    throw new Error('A manual verification browser is already open for this account.');
+    throw new ConflictError('A manual verification browser is already open for this account.');
   }
   if (isLoginFlowActiveForAccount(accountId)) {
-    throw new Error('A login browser is already open for this account. Close it first.');
+    throw new ConflictError('A login browser is already open for this account. Close it first.');
+  }
+  if (isConnectionCheckActiveForAccount(accountId)) {
+    throw new ConflictError(
+      'A connection check is active for this account. Wait for it to complete first.',
+    );
   }
 }
 
@@ -376,20 +429,6 @@ const RUN_LOG_LIMIT = 500;
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 const RUN_LOG_DETAIL_LIMIT = 2048;
 const QUEUE_POLL_INTERVAL_MS = 30_000;
-const SAFETY_STOP_PATTERNS = [
-  'action blocked',
-  'captcha',
-  'challenge',
-  'checkpoint',
-  'rate limit',
-  'rate-limit',
-  'suspicious',
-  'temporarily blocked',
-  'try again later',
-  'unusual activity',
-  'verify your account',
-  'we limit how often',
-] as const;
 
 function isPostingPlatform(value: unknown): value is PostingPlatform {
   return typeof value === 'string' && POSTING_PLATFORMS.includes(value as PostingPlatform);
@@ -1439,11 +1478,6 @@ export function parseCampaignDelayRangeMs(
   return { minMs: Math.round(minSeconds * 1000), maxMs: Math.round(maxSeconds * 1000) };
 }
 
-export function shouldStopCampaignAfterError(error: string): boolean {
-  const normalized = error.toLowerCase();
-  return SAFETY_STOP_PATTERNS.some((pattern) => normalized.includes(pattern));
-}
-
 function randomDelayMs(range: { minMs: number; maxMs: number }): number {
   if (range.maxMs <= range.minMs) return range.minMs;
   return range.minMs + Math.floor(Math.random() * (range.maxMs - range.minMs + 1));
@@ -2154,6 +2188,14 @@ export async function deleteAccount(
     };
   }
 
+  if (isConnectionCheckActiveForAccount(accountId)) {
+    return {
+      ok: false,
+      error:
+        'A connection check is active for this account. Wait for it to complete and try again.',
+    };
+  }
+
   if (isManualVerifyActive(accountId)) {
     return {
       ok: false,
@@ -2304,8 +2346,20 @@ async function startLogin(
   _useBrowserProfile: boolean,
   spoofFingerprint?: unknown,
 ): Promise<string> {
+  if (isPostingActiveForAccount(accountId)) {
+    throw new ConflictError(
+      'A posting flow is active for this account. Wait for it to complete first.',
+    );
+  }
   if (isManualVerifyActive(accountId)) {
-    throw new Error('Manual verification browser is open for this account. Close it first.');
+    throw new ConflictError(
+      'Manual verification browser is open for this account. Close it first.',
+    );
+  }
+  if (isConnectionCheckActiveForAccount(accountId)) {
+    throw new ConflictError(
+      'A connection check is active for this account. Wait for it to complete first.',
+    );
   }
 
   for (const [flowId, flow] of loginFlows) {
@@ -2895,6 +2949,57 @@ async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
       campaignOk: result.ok,
       results: result.results,
     });
+    return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/connection/check') {
+    const body = await readJson<{
+      account?: unknown;
+      platforms?: unknown;
+      spoofFingerprint?: unknown;
+    }>(req);
+    const account = typeof body.account === 'string' ? body.account.trim() : '';
+    if (account.length === 0) throw new Error('Account is required');
+    let platforms: readonly PostingPlatform[] | undefined;
+    if (body.platforms !== undefined) {
+      if (!Array.isArray(body.platforms) || !body.platforms.every(isPostingPlatform)) {
+        throw new Error('platforms must be an array of supported posting platforms');
+      }
+      platforms = body.platforms as PostingPlatform[];
+    }
+    if (
+      isPostingActiveForAccount(account) ||
+      isManualVerifyActive(account) ||
+      isLoginFlowActiveForAccount(account) ||
+      isConnectionCheckActiveForAccount(account)
+    ) {
+      sendJson(res, 409, {
+        ok: false,
+        error:
+          'A post, manual prepare, login, or another connection check is already active for this account',
+      });
+      return;
+    }
+    const connectionCheckKey = acquireConnectionCheckLock(account);
+    try {
+      const rows = await runConnectionChecks(account as AccountId, platforms, {
+        spoofFingerprint: body.spoofFingerprint === true,
+      });
+      for (const r of rows) {
+        const checkDetail = r.reason ?? r.evidence;
+        await appendRunLog({
+          scope: 'system',
+          level: r.session === 'authenticated' ? 'success' : 'warn',
+          message: `Connection check ${r.platform}: ${r.session}/${r.composer}`,
+          platform: r.platform,
+          account,
+          ...(checkDetail !== undefined && { detail: checkDetail }),
+        });
+      }
+      sendJson(res, 200, { ok: true, rows });
+    } finally {
+      releaseConnectionCheckLock(connectionCheckKey);
+    }
     return;
   }
 

@@ -1,8 +1,8 @@
 # signal-fire Build Progress
 
-Last updated: 2026-05-16 (source-repo conversion audit and parity fixes)
+Last updated: 2026-05-20 (selector verification pass — all six platforms rewritten from logged-in DOM captures; source-repo conversion audit and parity fixes 2026-05-16)
 
-- [x] All initial 6 platforms ported (untested against live)
+- [x] All initial 6 platforms ported (selectors rewritten 2026-05-20; not yet verified by a successful live post)
 
 ## Status legend
 - [x] = done
@@ -22,12 +22,12 @@ Last updated: 2026-05-16 (source-repo conversion audit and parity fixes)
 | social-poster | reference only | JS+Puppeteer. Architecture pattern + auto-recorder concept only. |
 
 > **Note**: X port uses twitter-automation-ai as primary source (freshest, deepest); social-poster x-com.js is a **secondary source** for sidebar-compose selectors (`tweetButtonInline`) — its post-button selector is included as a fallback path.
-| facebook-automation | ported (revalidate selectors against live FB) | Already TS+Playwright but 4yr stale. Template only; revalidate every selector. |
-| linkedin-puppeteer | ported (BEM selectors high staleness risk) | JS+Puppeteer, 2.5yr stale. Port ~50 lines of modal flow; add session persistence. |
-| youtube_uploader_selenium | ported (selectors need live re-recording against current Studio) | Python+Selenium, 3yr stale. Revalidate all selectors before porting. |
+| facebook-automation | ported (selectors confirmed in logged-in DOM capture, 2026-05-20) | Already TS+Playwright but 4yr stale source. |
+| linkedin-puppeteer | ported (selectors confirmed in logged-in DOM capture, 2026-05-20) | JS+Puppeteer, 2.5yr stale source. Port ~50 lines of modal flow; add session persistence. |
+| youtube_uploader_selenium | ported (concrete selectors 2026-05-20, not yet verified against live DOM) | Python+Selenium, 3yr stale source. |
 | puppeteer-extra | install as deps | Use playwright-extra + puppeteer-extra-plugin-stealth as npm deps. |
 
-> YouTube selectors are placeholder; many will need re-recording against current Studio. Test in headed mode first.
+> YouTube selectors are concrete (2026-05-20) but not yet verified against live DOM. Test in headed mode first.
 
 ## Core modules (src/core/)
 
@@ -43,19 +43,23 @@ Last updated: 2026-05-16 (source-repo conversion audit and parity fixes)
 
 ## Platforms (src/platforms/)
 
-- [x] tiktok — ported (untested against live TikTok)
-- [x] x — ported (untested; reply/retweet/quote/threads still TODO)
-- [x] facebook — ported (untested; selectors high staleness risk — revalidate against live FB)
-- [x] linkedin — ported (untested; BEM selectors high staleness risk)
-- [x] youtube — ported (untested; selectors need re-recording against current Studio)
-- [x] instagram — ported (photo only; reels, carousel, stories TODO)
+- [x] tiktok — ported (concrete selectors 2026-05-20; not yet verified against live DOM)
+- [x] x — ported (selectors confirmed in logged-in DOM capture 2026-05-20 for key composer/login areas; reply/retweet/quote/threads still TODO)
+- [x] facebook — ported (selectors confirmed in logged-in DOM capture 2026-05-20 for key composer/login areas)
+- [x] linkedin — ported (selectors confirmed in logged-in DOM capture 2026-05-20 for key composer/login areas)
+- [x] youtube — ported (concrete selectors 2026-05-20; not yet verified against live DOM)
+- [x] instagram — ported (selectors confirmed in logged-in DOM capture 2026-05-20; photo only; reels, carousel, stories TODO)
+
+> Note: no platform has a recorded successful live post yet. The "session fresh" flag shown by `signal-fire status` is metadata-only (set by login or the `/api/session/verify` endpoint) — it is not a live connectivity signal.
+
 - [ ] pinterest — needs research (no source repo yet)
 - [ ] reddit — needs research (no source repo yet)
 - [ ] threads — needs research (no source repo yet)
 
 ## CLI / orchestration
 
-- [x] cli/index.ts — entry, command parser (post / login / status)
+- [x] cli/index.ts — entry, command parser (post / login / status / check)
+- [x] cli/check.ts — live connection health gate; exits non-zero for unhealthy rows
 - [x] cli/post.ts — rejects Pinterest, Reddit, and Threads before dynamic platform imports
 - [ ] cli/scheduler.ts — cron-like scheduler with rate-limit awareness
   - Note: Scheduler not yet built — defer until live posting validates the per-platform modules.
@@ -70,7 +74,7 @@ Last updated: 2026-05-16 (source-repo conversion audit and parity fixes)
 - [x] Fourth platform port complete (LinkedIn)
 - [x] Fifth platform port complete (YouTube)
 - [x] Sixth platform port complete (Instagram)
-- [x] CLI built (post / login / status)
+- [x] CLI built (post / login / status / check)
 - [x] Project scaffold (package.json, tsconfig, biome, dirs)
 - [x] Dependencies installed (pnpm install)
 - [x] First green typecheck

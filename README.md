@@ -4,7 +4,7 @@ Browser-automation toolkit for posting to X, LinkedIn, Instagram, TikTok, Facebo
 
 ## Status
 
-Early scaffolding. See [PROGRESS.md](./PROGRESS.md) for live build status.
+All six platforms are implemented with selector evidence from a 2026-05-20 pass (see detail below). No platform has a recorded successful live post yet. The "session fresh" indicator shown in `signal-fire status` is metadata-only (set by login or the verify endpoint) — it is not a live connectivity check. See [PROGRESS.md](./PROGRESS.md) for build status.
 
 ## Stack
 - Node >= 22, TypeScript (strict, ESM)
@@ -14,16 +14,16 @@ Early scaffolding. See [PROGRESS.md](./PROGRESS.md) for live build status.
 ## Layout
 - `src/core/` - shared infrastructure (browser, session, rate limiter primitives, proxy pool, cookies)
 - `src/platforms/` - per-platform posting modules
-- `src/cli/` - command entry points (`post`, `login`, `status`)
+- `src/cli/` - command entry points (`post`, `login`, `status`, `check`)
 - `research/` - read-only references: 8 source repos being mined for code and patterns
 
 ## Source repos being ported
-- [x] TikTok - ported (untested against live TikTok)
-- [x] X - ported (untested; composer/community posting only. Reply, retweet, quote, and threads are still TODO)
-- [x] Facebook - ported (untested; selectors high staleness risk - revalidate against live FB)
-- [x] LinkedIn - ported (untested; BEM selectors high staleness risk)
-- [x] YouTube - ported (untested; high-revalidation-needed against current Studio)
-- [x] Instagram - ported (photo only; reels/carousel/stories TODO)
+- [x] TikTok - ported; concrete selectors (2026-05-20), not yet verified against live DOM.
+- [x] X - ported; selectors confirmed in a logged-in DOM capture (2026-05-20) for key composer/login areas. Reply/retweet/quote/threads still TODO.
+- [x] Facebook - ported; selectors confirmed in a logged-in DOM capture (2026-05-20) for key composer/login areas.
+- [x] LinkedIn - ported; selectors confirmed in a logged-in DOM capture (2026-05-20) for key composer/login areas.
+- [x] YouTube - ported; concrete selectors (2026-05-20), not yet verified against live DOM.
+- [x] Instagram - ported; selectors confirmed in a logged-in DOM capture (2026-05-20). Photo only; reels/carousel/stories TODO.
 
 The merged implementation has been re-audited against the local source repos in `research/`.
 Notable carried-over behavior now includes TikTok 5-minute schedule normalization and product links, X source-style media filtering and community posting, YouTube thumbnails and playlist creation, LinkedIn feed-confirmation URLs, instauto-style shared action limits, and source-compatible proxy/cookie handling.
@@ -138,6 +138,9 @@ signal-fire post --platform tiktok --account main \
 
 # Status
 signal-fire status
+
+# Live connection health gate (exits non-zero when any checked row is unhealthy)
+signal-fire check --account main --platform x
 ```
 
 Requires `pnpm build` first (or use `pnpm dev <command>` in development).

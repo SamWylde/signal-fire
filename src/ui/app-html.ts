@@ -1091,13 +1091,15 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
                 <label class="check-row"><input type="checkbox" id="useBrowserProfile" checked disabled> Persistent browser profile</label>
                 <div style="display:flex;gap:8px;flex-wrap:wrap">
                   <button id="startLogin" class="btn dark" type="button">Open browser login</button>
-                  <button id="verifyLogin" class="btn" type="button" disabled>Verify</button>
+                  <button id="verifyLogin" class="btn" type="button" disabled title="Updates the saved-session timestamp; does not open a browser">Mark trusted</button>
                   <button id="saveLogin" class="btn primary" type="button" disabled>Save session</button>
                   <button id="cancelLogin" class="btn" type="button" disabled>Cancel login</button>
+                  <button id="checkConnections" class="btn" type="button">Check connections</button>
                   <button id="clearSession" class="btn danger" type="button">Clear selected session</button>
                   <button id="deleteAccount" class="btn danger" type="button">Delete account</button>
                 </div>
                 <div class="meta-line" id="loginSessionDetail">No saved verification for this account.</div>
+                <div id="connectionCheckResults" hidden style="margin-top:8px;display:grid;gap:6px"></div>
               </div>
             </div>
             <div class="card">
@@ -2137,7 +2139,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         detail.textContent = 'Verified for ' + platformNames[currentPlatform()] + ' / ' + account + (row.lastValidated ? ' at ' + formatDateTime(row.lastValidated) + '.' : '.');
       } else if (session === 'stale') {
         badge.textContent = 'Needs recheck';
-        detail.textContent = 'Saved session exists, but it is stale. If the browser is logged in, click Verify to trust it again.';
+        detail.textContent = 'Saved session exists, but it is stale. If the browser is logged in, click Mark trusted to update the timestamp, or use Check connections for a live probe.';
       } else {
         badge.textContent = 'Not verified';
         detail.textContent = 'No saved verification for ' + platformNames[currentPlatform()] + ' / ' + account + '.';
@@ -2341,7 +2343,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
 
     function setLoginFlowActive(active) {
       if (active) {
-        verifyLoginEl.textContent = 'Verify';
+        verifyLoginEl.textContent = 'Mark trusted';
         saveLoginEl.textContent = 'Save session';
         saveLoginEl.disabled = false;
       }
@@ -2754,7 +2756,7 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         } else {
           activeFlowId = data.flowId;
           setLoginFlowActive(true);
-          setBottom('Finish the open browser challenge, then click Save session. Verify can also mark the selected account as trusted.', 'good');
+          setBottom('Finish the open browser challenge, then click Save session. Mark trusted can also update the saved-session timestamp without opening a browser.', 'good');
         }
       } catch (err) {
         setBottom(err.message, 'bad');
@@ -2768,8 +2770,8 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
         setBottom('Choose an account before verifying.', 'bad');
         return;
       }
-      setBottom('Marking selected account as verified...', '');
-      verifyLoginEl.textContent = 'Verifying...';
+      setBottom('Marking selected account as trusted...', '');
+      verifyLoginEl.textContent = 'Marking...';
       verifyLoginEl.disabled = true;
       try {
         await api('/api/session/verify', {
@@ -2777,14 +2779,93 @@ export const REDESIGNED_APP_HTML = String.raw`<!doctype html>
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ platform: currentPlatform(), account: currentAccount() })
         });
-        setBottom('Session verified for ' + platformNames[currentPlatform()] + ' / ' + currentAccount() + '.', 'good');
+        setBottom('Session marked trusted for ' + platformNames[currentPlatform()] + ' / ' + currentAccount() + '.', 'good');
         await refreshAccounts();
         await refreshStatus();
       } catch (err) {
         setBottom(err.message, 'bad');
       } finally {
-        verifyLoginEl.textContent = 'Verify';
+        verifyLoginEl.textContent = 'Mark trusted';
         verifyLoginEl.disabled = currentAccount().length === 0;
+      }
+    });
+
+    function renderConnectionCheckResults(rows) {
+      var el = document.getElementById('connectionCheckResults');
+      el.replaceChildren();
+      rows.forEach(function(r) {
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:8px;align-items:baseline;flex-wrap:wrap';
+        var namePart = document.createElement('strong');
+        namePart.textContent = r.platform.charAt(0).toUpperCase() + r.platform.slice(1);
+        var badge = document.createElement('span');
+        var detail = '';
+        if (r.session === 'authenticated' && r.composer === 'ok') {
+          badge.className = 'pill ok';
+          badge.textContent = 'Connected';
+        } else if (r.session === 'authenticated' && r.composer === 'drifted') {
+          badge.className = 'pill warn';
+          badge.textContent = 'Composer drifted';
+          if (r.missingSelectors && r.missingSelectors.length > 0) detail = r.missingSelectors.join(', ');
+        } else if (r.session === 'authenticated') {
+          badge.className = 'pill warn';
+          badge.textContent = 'Connected (composer not checked)';
+        } else if (r.session === 'challenge_required' || r.session === 'soft_block' || r.session === 'quarantined') {
+          badge.className = 'pill warn';
+          badge.textContent = r.session.replace(/_/g, ' ');
+          if (r.reason) detail = r.reason;
+        } else if (r.session === 'logged_out') {
+          badge.className = 'pill bad';
+          badge.textContent = 'Logged out';
+        } else if (r.session === 'missing_profile') {
+          badge.className = 'pill bad';
+          badge.textContent = 'No saved session';
+        } else {
+          badge.className = 'pill none';
+          badge.textContent = r.session;
+          if (r.reason) detail = r.reason;
+        }
+        row.appendChild(namePart);
+        row.appendChild(badge);
+        if (detail) {
+          var detailEl = document.createElement('span');
+          detailEl.className = 'meta-line';
+          detailEl.textContent = detail;
+          row.appendChild(detailEl);
+        }
+        el.appendChild(row);
+      });
+      el.hidden = rows.length === 0;
+    }
+
+    document.getElementById('checkConnections').addEventListener('click', async function() {
+      var account = currentAccount();
+      if (account.length === 0) {
+        setBottom('Choose an account before checking connections.', 'bad');
+        return;
+      }
+      var btn = document.getElementById('checkConnections');
+      btn.textContent = 'Checking…';
+      btn.disabled = true;
+      try {
+        var data = await api('/api/connection/check', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ account: account })
+        });
+        renderConnectionCheckResults(data.rows || []);
+        await refreshAccounts();
+        await refreshStatus();
+        setBottom('Connection check complete for ' + account + '.', 'good');
+      } catch (err) {
+        if (err.status === 409) {
+          showToast('Busy', err.message, 'bad');
+        } else {
+          setBottom(err.message, 'bad');
+        }
+      } finally {
+        btn.textContent = 'Check connections';
+        btn.disabled = false;
       }
     });
 

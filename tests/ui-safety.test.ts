@@ -4,10 +4,14 @@ import * as path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { ConnectionCheckDriver } from '../src/core/connection-check.js';
+import { setConnectionCheckDriverForTests } from '../src/core/connection-check.js';
+
 import { isForbiddenIp, safeFetchToBuffer } from '../src/ui/safe-fetch.js';
 
 import { readLedger } from '../src/core/ledger.js';
-import { readMetadata } from '../src/core/session.js';
+import { getSessionPaths, readMetadata, writeMetadata } from '../src/core/session.js';
+import type { AccountId, PostingPlatform } from '../src/core/types.js';
 import { REDESIGNED_APP_HTML } from '../src/ui/app-html.js';
 import {
   buildLaunchOptions,
@@ -860,5 +864,306 @@ describe('spoof fingerprint launch setting', () => {
 
     await expect(resolveSpoofFingerprintForLaunch(undefined)).resolves.toBe(true);
     await expect(resolveSpoofFingerprintForLaunch(false)).resolves.toBe(false);
+  });
+});
+
+describe('connection-health-check UI affordances (HTML content)', () => {
+  it('REDESIGNED_APP_HTML contains the Check connections button with id and label', () => {
+    expect(REDESIGNED_APP_HTML).toContain('id="checkConnections"');
+    expect(REDESIGNED_APP_HTML).toContain('Check connections');
+  });
+
+  it('REDESIGNED_APP_HTML contains the Mark trusted button with correct label', () => {
+    expect(REDESIGNED_APP_HTML).toContain('id="verifyLogin"');
+    expect(REDESIGNED_APP_HTML).toContain('Mark trusted');
+  });
+
+  it('REDESIGNED_APP_HTML wires up the /api/connection/check endpoint', () => {
+    expect(REDESIGNED_APP_HTML).toContain('/api/connection/check');
+  });
+
+  it('REDESIGNED_APP_HTML includes the connection check results container', () => {
+    expect(REDESIGNED_APP_HTML).toContain('id="connectionCheckResults"');
+  });
+
+  it('renders connection check result details with textContent instead of row innerHTML', () => {
+    expect(REDESIGNED_APP_HTML).not.toContain("row.innerHTML = namePart + ' ' + badge");
+    expect(REDESIGNED_APP_HTML).toContain('detailEl.textContent = detail');
+    expect(REDESIGNED_APP_HTML).toContain('badge.textContent');
+  });
+
+  it('refreshes account and status state after a successful connection check', () => {
+    expect(REDESIGNED_APP_HTML).toContain('renderConnectionCheckResults(data.rows || []);');
+    expect(REDESIGNED_APP_HTML).toContain('await refreshAccounts();');
+    expect(REDESIGNED_APP_HTML).toContain('await refreshStatus();');
+  });
+});
+
+describe('POST /api/connection/check live server tests', () => {
+  let tmpDir: string;
+  let originalHome: string | undefined;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'sf-conncheck-ui-test-'));
+    originalHome = process.env.SIGNAL_FIRE_HOME;
+    process.env.SIGNAL_FIRE_HOME = tmpDir;
+    setConnectionCheckDriverForTests(null);
+  });
+
+  afterEach(async () => {
+    setConnectionCheckDriverForTests(null);
+    if (originalHome === undefined) {
+      Reflect.deleteProperty(process.env, 'SIGNAL_FIRE_HOME');
+    } else {
+      process.env.SIGNAL_FIRE_HOME = originalHome;
+    }
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeFakeDriver(): ConnectionCheckDriver {
+    return {
+      async open() {
+        return { page: {} as never, close: async () => undefined };
+      },
+      async isLoggedIn() {
+        return true;
+      },
+      async readPageState() {
+        return { url: 'https://x.com/home', pageText: 'feed' };
+      },
+      async probeComposer() {
+        return { composer: 'ok', checkedSelectors: ['composer.textEditor'], missingSelectors: [] };
+      },
+    };
+  }
+
+  async function seedProfile(platform: PostingPlatform, accountId: AccountId): Promise<void> {
+    await writeMetadata({
+      platform,
+      accountId,
+      mode: 'userDataDir',
+      lastValidated: '2025-01-01T00:00:00.000Z',
+    });
+    await fs.mkdir(getSessionPaths(platform, accountId).userDataDir, { recursive: true });
+  }
+
+  function makeStalledDriver(): {
+    driver: ConnectionCheckDriver;
+    openReady: Promise<void>;
+    releaseOpen: () => void;
+  } {
+    let signalOpen: () => void = () => undefined;
+    const openReady = new Promise<void>((resolve) => {
+      signalOpen = resolve;
+    });
+    let releaseOpen: () => void = () => undefined;
+    const openGate = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+
+    return {
+      openReady,
+      releaseOpen,
+      driver: {
+        async open() {
+          signalOpen();
+          await openGate;
+          return { page: {} as never, close: async () => undefined };
+        },
+        async isLoggedIn() {
+          return true;
+        },
+        async readPageState() {
+          return { url: 'https://x.com/home', pageText: 'feed' };
+        },
+        async probeComposer() {
+          return { composer: 'ok', checkedSelectors: [], missingSelectors: [] };
+        },
+      },
+    };
+  }
+
+  function simpleCampaignForm(account = 'main'): FormData {
+    const form = new FormData();
+    form.set('account', account);
+    form.set('text', 'Connection lock regression');
+    form.set('pageUrl', 'https://www.facebook.com/example');
+    form.set('linkedinTarget', 'profile');
+    form.set('campaignDelayMinSeconds', '0');
+    form.set('campaignDelayMaxSeconds', '0');
+    form.append('targets', 'x');
+    return form;
+  }
+
+  it('returns 200 and rows when account is provided and driver succeeds', async () => {
+    await seedProfile('x', 'main');
+    setConnectionCheckDriverForTests(makeFakeDriver());
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const response = await fetch(`${handle.url}/api/connection/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ account: 'main', platforms: ['x'] }),
+      });
+      const body = (await response.json()) as { ok?: boolean; rows?: unknown[] };
+
+      expect(response.status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.rows)).toBe(true);
+      expect(body.rows?.length).toBe(1);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('returns 409 when a second check is requested while one is still running for the same account', async () => {
+    // Seed metadata so runConnectionCheck does not short-circuit with missing_profile
+    // (it exits early before calling driver.open() when no metadata exists).
+    await seedProfile('x', 'main');
+
+    // Build a driver whose open() signals the test and then stalls.
+    // connectionCheckActive.add(account) is called by the server BEFORE runConnectionChecks,
+    // so by the time open() is called (inside runConnectionChecks) the account is already active.
+    let signalOpen: () => void = () => undefined;
+    const openReady = new Promise<void>((resolve) => {
+      signalOpen = resolve;
+    });
+    let releaseOpen: () => void = () => undefined;
+    const openGate = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+
+    const stalledDriver: ConnectionCheckDriver = {
+      async open() {
+        signalOpen(); // tell the test the open() call has started
+        await openGate; // stall until released
+        return { page: {} as never, close: async () => undefined };
+      },
+      async isLoggedIn() {
+        return true;
+      },
+      async readPageState() {
+        return { url: 'https://x.com/home', pageText: 'feed' };
+      },
+      async probeComposer() {
+        return { composer: 'ok', checkedSelectors: [], missingSelectors: [] };
+      },
+    };
+
+    setConnectionCheckDriverForTests(stalledDriver);
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      // Fire first request (will stall in open())
+      const first = fetch(`${handle.url}/api/connection/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ account: 'main', platforms: ['x'] }),
+      });
+
+      // Wait until the server has actually called open() — proves connectionCheckActive has 'main'
+      await openReady;
+
+      // Fire second request for the same account — should get 409 immediately
+      const second = await fetch(`${handle.url}/api/connection/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ account: 'main', platforms: ['x'] }),
+      });
+
+      expect(second.status).toBe(409);
+      const secondBody = (await second.json()) as { ok?: boolean; error?: string };
+      expect(secondBody.ok).toBe(false);
+      expect(secondBody.error).toMatch(/already active/i);
+
+      // Release the stalled open() so the server can finish and close cleanly.
+      releaseOpen();
+      await first;
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('uses canonical account locking so account aliases cannot start a second check', async () => {
+    await seedProfile('x', 'Thomas Darby');
+    const stalled = makeStalledDriver();
+    setConnectionCheckDriverForTests(stalled.driver);
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const first = fetch(`${handle.url}/api/connection/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ account: 'Thomas Darby', platforms: ['x'] }),
+      });
+
+      await stalled.openReady;
+
+      const second = await fetch(`${handle.url}/api/connection/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ account: 'Thomas_Darby', platforms: ['x'] }),
+      });
+
+      expect(second.status).toBe(409);
+      const secondBody = (await second.json()) as { error?: string };
+      expect(secondBody.error).toMatch(/already active/i);
+
+      stalled.releaseOpen();
+      await first;
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('blocks login, manual prepare, and automatic posting while a connection check is active', async () => {
+    await seedProfile('x', 'main');
+    const stalled = makeStalledDriver();
+    setConnectionCheckDriverForTests(stalled.driver);
+
+    const handle = await startUiServer({ port: 0 });
+    try {
+      const first = fetch(`${handle.url}/api/connection/check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ account: 'main', platforms: ['x'] }),
+      });
+
+      await stalled.openReady;
+
+      const loginResponse = await fetch(`${handle.url}/api/login/start`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ platform: 'x', account: 'main' }),
+      });
+      expect(loginResponse.status).toBe(409);
+      expect(((await loginResponse.json()) as { error?: string }).error).toMatch(
+        /connection check/i,
+      );
+
+      const manualResponse = await fetch(`${handle.url}/api/campaign/manual`, {
+        method: 'POST',
+        body: simpleCampaignForm(),
+      });
+      expect(manualResponse.status).toBe(409);
+      expect(((await manualResponse.json()) as { error?: string }).error).toMatch(
+        /connection check/i,
+      );
+
+      const automaticResponse = await fetch(`${handle.url}/api/campaign`, {
+        method: 'POST',
+        body: simpleCampaignForm(),
+      });
+      expect(automaticResponse.status).toBe(409);
+      expect(((await automaticResponse.json()) as { error?: string }).error).toMatch(
+        /connection check/i,
+      );
+
+      stalled.releaseOpen();
+      await first;
+    } finally {
+      await handle.close();
+    }
   });
 });

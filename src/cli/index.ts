@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { runCheck } from './check.js';
 import { runLogin } from './login.js';
 // signal-fire CLI entry point
 import { runPost } from './post.js';
@@ -12,6 +13,7 @@ Usage:
   signal-fire post --platform <p> --account <id> [platform flags]
   signal-fire login --platform <p> --account <id>
   signal-fire status [--platform <p>] [--account <id>]
+  signal-fire check --account <id> [--platform <p>]
   signal-fire ui [--port <port>]
   signal-fire help
 
@@ -34,6 +36,9 @@ try {
       break;
     case 'status':
       await runStatus(rest);
+      break;
+    case 'check':
+      await runCheck(rest);
       break;
     case 'ui':
       await runUi(rest);

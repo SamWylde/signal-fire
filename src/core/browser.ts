@@ -53,6 +53,11 @@ export interface LaunchOptions {
   debugUserAgent?: string;
   /** @deprecated Viewport overrides are detectable under Patchright; ignored. */
   debugViewport?: { width: number; height: number };
+  /**
+   * Internal read-only probes can pre-classify quarantine state without letting
+   * launch clear expired records as a side effect.
+   */
+  skipQuarantineCheck?: boolean;
 }
 
 export interface LaunchedBrowser {
@@ -262,6 +267,25 @@ export async function waitForAnyVisible(
   }
 }
 
+export async function waitForAnyAttached(
+  page: Page,
+  selectors: string[],
+  timeoutMs: number,
+): Promise<boolean> {
+  if (selectors.length === 0) return false;
+
+  try {
+    await Promise.any(
+      selectors.map((selector) =>
+        page.locator(selector).first().waitFor({ state: 'attached', timeout: timeoutMs }),
+      ),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isLocatorVisible(locator: Locator, timeoutMs: number): Promise<boolean> {
   try {
     await locator.waitFor({ state: 'visible', timeout: timeoutMs });
@@ -281,7 +305,9 @@ export async function assertNotQuarantined(platform: Platform, accountId: string
 }
 
 export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowser> {
-  await assertNotQuarantined(opts.platform, opts.accountId);
+  if (opts.skipQuarantineCheck !== true) {
+    await assertNotQuarantined(opts.platform, opts.accountId);
+  }
 
   warnIgnoredLaunchOptions(opts);
   const browserChannel = resolveBrowserChannel(opts.browserChannel);
